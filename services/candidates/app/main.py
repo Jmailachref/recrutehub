@@ -24,6 +24,19 @@ EMAIL = r"^\s*[^@\s]+@[^@\s]+\.[^@\s]+\s*$"
 Status = Literal["applied", "shortlisted", "invited", "tested", "rejected", "hired"]
 
 
+class StatusIn(BaseModel):
+    status: Status
+
+
+class InternalCandidateOut(BaseModel):
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    offer_id: uuid.UUID
+    name: str
+    email: str
+    status: str
+
+
 class Applied(BaseModel):
     id: uuid.UUID
     message: str
@@ -173,3 +186,34 @@ def download_cv(candidate_id: uuid.UUID, db: Db, user: Staff) -> Response:
             "Cache-Control": "private, no-store",
         },
     )
+
+
+# --- internal ---------------------------------------------------------------
+
+
+Service = Annotated[Principal, Depends(require_role("service"))]
+
+
+def internal_out(c: Candidate) -> InternalCandidateOut:
+    return InternalCandidateOut(
+        id=c.id, tenant_id=c.tenant_id, offer_id=c.offer_id, name=c.name, email=c.email, status=c.status
+    )
+
+
+@app.get("/internal/candidates/{candidate_id}", response_model=InternalCandidateOut, tags=["internal"])
+def internal_candidate(candidate_id: uuid.UUID, db: Db, _: Service) -> InternalCandidateOut:
+    c = db.get(Candidate, candidate_id)
+    if c is None:
+        raise ApiError(404, "not_found", "Candidate not found")
+    return internal_out(c)
+
+
+@app.post("/internal/candidates/{candidate_id}/status", response_model=InternalCandidateOut, tags=["internal"])
+def internal_set_status(candidate_id: uuid.UUID, body: StatusIn, db: Db, _: Service) -> InternalCandidateOut:
+    """Moves an application along as its test progresses (invited, tested)."""
+    c = db.get(Candidate, candidate_id)
+    if c is None:
+        raise ApiError(404, "not_found", "Candidate not found")
+    c.status = body.status
+    db.commit()
+    return internal_out(c)

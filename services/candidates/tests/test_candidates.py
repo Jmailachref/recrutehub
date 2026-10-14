@@ -85,3 +85,14 @@ def test_cv_download(client):
 def test_staff_only(client):
     assert client.get("/candidates").status_code == 401
     assert client.get("/candidates", headers=token(role="candidate")).status_code == 403
+
+
+def test_internal_read_and_status(client):
+    cid = apply(client).json()["id"]
+    service = token(role="service", tenant=None)
+    c = client.get(f"/internal/candidates/{cid}", headers=service).json()
+    assert (c["tenant_id"], c["status"]) == (str(ACME), "applied")
+    r = client.post(f"/internal/candidates/{cid}/status", json={"status": "invited"}, headers=service)
+    assert r.json()["status"] == "invited"
+    assert client.get(f"/candidates/{cid}", headers=token()).json()["status"] == "invited"
+    assert client.get(f"/internal/candidates/{cid}", headers=token()).status_code == 403

@@ -25,6 +25,8 @@ x-codeplay: &codeplay
     REDIS_URL: redis://redis:6379/1
     API_KEYS: ui:ui-key,recrutehub:${CODEPLAY_API_KEY:-recrutehub-dev-key}
     UI_API_KEY: ui-key
+    # Every candidate shares RecruteHub's key; assessments limits each candidate instead.
+    RATE_LIMIT_PER_MINUTE: "0"
   depends_on:
     postgres:
       condition: service_healthy
@@ -109,11 +111,22 @@ services:
   assessments:
     <<: *service
     build: { context: ., dockerfile: services/assessments/Dockerfile }
-    environment:
+    image: recrutehub/assessments:local
+    environment: &assessments-env
       <<: *env
+      SERVICE_NAME: assessments
       DATABASE_URL: postgresql+psycopg://assessments:assessments@postgres:5432/assessments_db
       CODEPLAY_URL: http://codeplay-api:8000
       CODEPLAY_API_KEY: ${CODEPLAY_API_KEY:-recrutehub-dev-key}
+      # Where candidates open their test link.
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost}
+
+  assessments-worker:
+    <<: *service
+    build: { context: ., dockerfile: services/assessments/Dockerfile }
+    image: recrutehub/assessments:local
+    command: ["python", "-m", "app.worker"]
+    environment: *assessments-env
 
   notifications:
     <<: *service

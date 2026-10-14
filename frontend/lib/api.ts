@@ -117,3 +117,65 @@ export const candidateStatusLabel: Record<CandidateStatus, string> = {
   rejected: "Rejected",
   hired: "Hired",
 };
+
+export type TestStatus = "invited" | "in_progress" | "submitted" | "scored" | "expired";
+
+export type TestSummary = {
+  id: string;
+  offer_id: string;
+  candidate_id: string;
+  candidate_name: string;
+  candidate_email: string;
+  status: TestStatus;
+  invited_at: string;
+  started_at: string | null;
+  submitted_at: string | null;
+  theory_score: number | null;
+  practice_score: number | null;
+  total_score: number | null;
+};
+
+export type TestAnswer = {
+  problem_id: string;
+  position: number;
+  kind: "code" | "qcm";
+  language: string;
+  level: number;
+  title: string;
+  statement: string;
+  options: string[] | null;
+  correct_choices: number[] | null;
+  choices: number[] | null;
+  source_code: string | null;
+  verdict: string | null;
+  score: number | null;
+};
+
+export type TestDetail = TestSummary & {
+  offer_title: string;
+  duration_seconds: number;
+  weight_theory: number;
+  weight_practice: number;
+  answers: TestAnswer[];
+};
+
+export const testStatusLabel: Record<TestStatus, string> = {
+  invited: "Invited",
+  in_progress: "Taking the test",
+  submitted: "Being scored",
+  scored: "Scored",
+  expired: "Link expired",
+};
+
+export const verdictLabel: Record<string, string> = {
+  accepted: "All tests pass",
+  wrong_answer: "Wrong answer",
+  compilation_error: "Does not compile",
+  runtime_error: "Runtime error",
+  time_limit_exceeded: "Too slow",
+  memory_limit_exceeded: "Too much memory",
+  output_limit_exceeded: "Too much output",
+  no_answer: "Not answered",
+  correct: "Correct",
+  wrong: "Wrong",
+};

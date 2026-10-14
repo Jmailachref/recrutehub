@@ -13,7 +13,7 @@ https://claude.ai/code/artifact/b16a2ca9-0420-494d-8116-6f9f261ca0e7
 | gateway | nginx, the only public entry point | 80 |
 | frontend | Next.js app | via gateway |
 | auth, offers, questions, candidates, assessments, notifications | FastAPI backends, one database each | via gateway at `/api/<service>/` |
-| questions-worker, candidates-worker, notifications-worker | background jobs from Redis queues | none |
+| questions-worker, candidates-worker, assessments-worker, notifications-worker | background jobs from Redis queues | none |
 | codeplay-api, codeplay-worker | Code Playground: question bank, test generation, code judging | 8000 (localhost) |
 | postgres | one database and user per service | none |
 | redis | job queues | none |
@@ -45,8 +45,9 @@ another company and its admin:
 docker compose exec auth python -m app.bootstrap "Acme" admin@acme.com 'a long password'
 ```
 
-Set `GATEWAY_PORT` to use another port than 80, and `CODEPLAY_SOURCE` to
-build Code Playground from another folder.
+Set `GATEWAY_PORT` to use another port than 80, `CODEPLAY_SOURCE` to
+build Code Playground from another folder, and `PUBLIC_URL` to the address
+candidates open their test links at (default `http://localhost`).
 
 Check a running stack: `sh e2e/smoke.sh http://localhost`.
 
@@ -67,6 +68,27 @@ and a CV (PDF, 10 MB at most). The CV goes to the `cvs` bucket as
 email (open http://localhost:8025 to read it locally). One email can apply once
 per offer, and one address can send 10 applications an hour. Recruiters see
 the applications under **Candidates**, filtered by offer, and open each CV.
+
+## Candidate tests
+
+From **Candidates**, a recruiter invites an applicant to the test. Code
+Playground draws their questions from the offer's recipe (questions this
+company already used come last) and freezes them, and the candidate gets an
+email with a link that works for 7 days. The link carries a candidate token
+in its `#fragment`, so it never reaches a server log; it opens that one test
+only.
+
+The candidate sees an overview, then starts the clock: they get the sum of
+the questions' timers, in one block. Answers save as they type; code
+questions run against their visible examples in the sandbox (20 runs a
+minute). Submitting, or running out of time, ends the test. The assessments
+worker then judges each code answer against all its test cases, hidden ones
+included, and checks the QCM answers (all right options and no wrong one).
+
+Scores are percentages: practice is the average code score (share of test
+cases passed), theory the share of QCM answered right, and the total weighs
+them with the offer's weights. Candidates are ranked by total, and each test
+opens to every answer with its verdict.
 
 Emails go through the notifications worker: other services queue a
 `send_email` job, the worker sends it over SMTP, retrying 3 times, and logs it
