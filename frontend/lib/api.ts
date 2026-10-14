@@ -94,3 +94,26 @@ export const levelLabel: Record<number, string> = {
 };
 
 export const statusLabel: Record<OfferStatus, string> = { draft: "Draft", active: "Open", archived: "Archived" };
+
+export type CandidateStatus = "applied" | "shortlisted" | "invited" | "tested" | "rejected" | "hired";
+
+export type Candidate = {
+  id: string;
+  offer_id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  status: CandidateStatus;
+  cv_size: number;
+  cv_score: number | null;
+  created_at: string;
+};
+
+export const candidateStatusLabel: Record<CandidateStatus, string> = {
+  applied: "Applied",
+  shortlisted: "Shortlisted",
+  invited: "Invited to the test",
+  tested: "Test done",
+  rejected: "Rejected",
+  hired: "Hired",
+};

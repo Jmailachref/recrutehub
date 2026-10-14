@@ -92,6 +92,7 @@ services:
     image: recrutehub/candidates:local
     environment: &candidates-env
       <<: *env
+      SERVICE_NAME: candidates
       DATABASE_URL: postgresql+psycopg://candidates:candidates@postgres:5432/candidates_db
       S3_URL: http://s3:8333
       S3_ACCESS_KEY: recrutehub

@@ -23,3 +23,7 @@ echo "ok  frontend"
 docker compose exec -T assessments python -c \
   "import httpx; httpx.get('http://codeplay-api:8000/v1/health').raise_for_status()" || fail "assessments cannot reach Code Playground"
 echo "ok  Code Playground reachable from the backends"
+
+code=$(curl -s -o /dev/null -w '%{http_code}' -F name=Smoke -F email=smoke@example.com -F "cv=@/dev/null;type=application/pdf" "$BASE/api/candidates/apply/no-such-offer")
+[ "$code" = 404 ] || fail "applying to an unknown offer should be 404 (got $code)"
+echo "ok  apply checks the offer"

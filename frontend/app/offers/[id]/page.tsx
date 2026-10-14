@@ -129,6 +129,11 @@ export default function OfferPage() {
           Apply link: <code className="select">{applyLink}</code>
         </p>
       )}
+      {offer.status !== "draft" && (
+        <p>
+          <a href={`/candidates?offer=${offer.id}`}>See the candidates</a>
+        </p>
+      )}
       {error && <p className="error">{error}</p>}
       {notice && <p className="ok">{notice}</p>}
 
