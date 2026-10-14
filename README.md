@@ -50,6 +50,15 @@ build Code Playground from another folder.
 
 Check a running stack: `sh e2e/smoke.sh http://localhost`.
 
+## Offers
+
+A recruiter creates an offer, then sets its test: for each language or topic
+and level, how many code and QCM questions (for example Python level 5: 4 code
+and 1 QCM; Docker level 2: 6 QCM). The editor only offers counts the question
+bank in Code Playground can fill. Publishing opens the offer's apply link
+(`/apply/<token>`); archiving closes it. Each candidate's questions are drawn
+by Code Playground when they are invited.
+
 ## Layout
 
 ```

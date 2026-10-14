@@ -71,6 +71,28 @@ def test_wrong_role_is_403(app):
     assert r.json()["error"]["code"] == "forbidden"
 
 
+def test_validator_errors_are_reported_as_400(monkeypatch, tmp_path):
+    from pydantic import BaseModel, model_validator
+
+    class Body(BaseModel):
+        n: int
+
+        @model_validator(mode="after")
+        def positive(self):
+            if self.n < 0:
+                raise ValueError("n must be positive")
+            return self
+
+    app = create_app("offers")
+
+    @app.post("/n")
+    def n(body: Body):
+        return body
+
+    r = TestClient(app).post("/n", json={"n": -1})
+    assert r.status_code == 400 and "n must be positive" in r.text
+
+
 def test_errors_use_shared_format(app):
     assert app.get("/boom").json() == {"error": {"code": "conflict", "message": "Already exists"}}
     assert app.get("/missing").json()["error"]["code"] == "not_found"
