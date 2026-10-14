@@ -17,7 +17,7 @@ code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/auth/internal/anything"
 [ "$code" = 404 ] || fail "internal endpoints must not be reachable through the gateway (got $code)"
 echo "ok  internal endpoints are hidden"
 
-curl -fsS "$BASE/" | grep -q '<title>RecruteHub' || fail "frontend"
+curl -fsSL "$BASE/login" | grep -q '<title>RecruteHub' || fail "frontend"
 echo "ok  frontend"
 
 docker compose exec -T assessments python -c \

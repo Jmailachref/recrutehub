@@ -60,6 +60,11 @@ def test_bad_tokens_are_401(app, header):
     assert r.json()["error"]["code"] == "unauthorized"
 
 
+def test_token_from_cookie(app):
+    app.cookies.set("rh_access", make_token())
+    assert app.get("/mine").status_code == 200
+
+
 def test_wrong_role_is_403(app):
     r = app.get("/mine", headers={"Authorization": f"Bearer {make_token(role='candidate')}"})
     assert r.status_code == 403
