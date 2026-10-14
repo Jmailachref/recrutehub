@@ -2,8 +2,9 @@
 FROM python:3.13-slim
 WORKDIR /srv
 COPY libs/common /libs/common
-RUN pip install --no-cache-dir /libs/common
+COPY services/auth/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir /libs/common -r /tmp/requirements.txt
 COPY services/auth/ ./
 ENV PYTHONUNBUFFERED=1
-# Migrations run on every start, then the API.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"]
+# Migrations run on every start, then the development admin is created if set, then the API.
+CMD ["sh", "-c", "alembic upgrade head && python -m app.bootstrap && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"]

@@ -2,7 +2,8 @@
 FROM python:3.13-slim
 WORKDIR /srv
 COPY libs/common /libs/common
-RUN pip install --no-cache-dir /libs/common
+COPY services/assessments/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir /libs/common -r /tmp/requirements.txt
 COPY services/assessments/ ./
 ENV PYTHONUNBUFFERED=1
 # Migrations run on every start, then the API.

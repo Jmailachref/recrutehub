@@ -19,7 +19,8 @@ jobs:
           python-version: "3.13"
           cache: pip
           cache-dependency-path: libs/common/pyproject.toml
-      - run: pip install ./libs/common pytest
+      - run: pip install "${{ github.workspace }}/libs/common" pytest $( [ -f requirements.txt ] && echo -r requirements.txt )
+        working-directory: ${{ matrix.package }}
       - run: python -m pytest -q
         working-directory: ${{ matrix.package }}
 

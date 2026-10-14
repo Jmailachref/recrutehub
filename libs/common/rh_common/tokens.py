@@ -1,7 +1,8 @@
 """Checks the JWTs that the auth service signs (RS256).
 
 Every service reads auth's public key from its JWKS endpoint (AUTH_JWKS_URL)
-once and caches it, so checking a token needs no call to auth.
+once and caches it, so checking a token needs no call to auth. The browser
+sends the token in the rh_access cookie; other callers use a Bearer header.
 """
 
 import os
@@ -15,7 +16,9 @@ from fastapi import Depends, Request
 from rh_common.errors import ApiError
 
 ISSUER = "recrutehub-auth"
-ROLES = {"admin", "recruiter", "candidate", "service"}
+ROLES = {"admin", "editor", "recruiter", "candidate", "service"}
+ACCESS_COOKIE = "rh_access"
+_local_key = None
 
 
 @dataclass(frozen=True)
@@ -31,7 +34,15 @@ def _jwks_client() -> jwt.PyJWKClient:
     return jwt.PyJWKClient(os.environ["AUTH_JWKS_URL"], cache_keys=True, lifespan=3600)
 
 
+def use_local_key(public_key) -> None:
+    """Checks tokens with this key instead of fetching the JWKS (the auth service itself)."""
+    global _local_key
+    _local_key = public_key
+
+
 def signing_key(token: str):
+    if _local_key is not None:
+        return _local_key
     return _jwks_client().get_signing_key_from_jwt(token).key
 
 
@@ -57,11 +68,12 @@ def decode(token: str, key=None) -> Principal:
 
 
 def current_principal(request: Request) -> Principal:
-    """FastAPI dependency: the caller, from the Bearer token."""
-    header = request.headers.get("authorization", "")
-    scheme, _, token = header.partition(" ")
+    """FastAPI dependency: the caller, from the Bearer header or the rh_access cookie."""
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
     if scheme.lower() != "bearer" or not token:
-        raise ApiError(401, "unauthorized", "Missing bearer token")
+        token = request.cookies.get(ACCESS_COOKIE, "")
+    if not token:
+        raise ApiError(401, "unauthorized", "Not signed in")
     return decode(token)
 
 
