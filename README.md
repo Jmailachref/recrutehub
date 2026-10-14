@@ -59,6 +59,19 @@ bank in Code Playground can fill. Publishing opens the offer's apply link
 (`/apply/<token>`); archiving closes it. Each candidate's questions are drawn
 by Code Playground when they are invited.
 
+## Applications
+
+The apply page shows the offer and takes a name, an email, an optional phone
+and a CV (PDF, 10 MB at most). The CV goes to the `cvs` bucket as
+`<company>/<offer>/<candidate>.pdf`, and the candidate gets a confirmation
+email (open http://localhost:8025 to read it locally). One email can apply once
+per offer, and one address can send 10 applications an hour. Recruiters see
+the applications under **Candidates**, filtered by offer, and open each CV.
+
+Emails go through the notifications worker: other services queue a
+`send_email` job, the worker sends it over SMTP, retrying 3 times, and logs it
+(admins read the log at `/api/notifications/emails`).
+
 ## Layout
 
 ```

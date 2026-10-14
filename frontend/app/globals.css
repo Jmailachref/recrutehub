@@ -76,3 +76,7 @@ input[type=range] { accent-color: var(--accent); }
 .weights input { flex: 1; }
 .select { user-select: all; }
 .add-user { margin-bottom: 20px; }
+.apply-page { max-width: 640px; margin: 0 auto; padding: 32px 16px; display: grid; gap: 16px; }
+.apply { width: 100%; max-width: 640px; }
+.apply .description { white-space: pre-wrap; margin: 12px 0 0; }
+.apply .stack { margin: 0; }

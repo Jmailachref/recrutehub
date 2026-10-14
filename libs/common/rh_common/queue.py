@@ -21,6 +21,16 @@ def enqueue(queue: str, job_type: str, **payload) -> None:
     client().lpush(f"rh:queue:{queue}", json.dumps({"type": job_type, **payload}))
 
 
+def over_limit(key: str, limit: int, window_seconds: int) -> bool:
+    """Counts one hit on key; True once more than limit hits happened in the window."""
+    r = client()
+    full = f"rh:rate:{key}"
+    hits = r.incr(full)
+    if hits == 1:
+        r.expire(full, window_seconds)
+    return hits > limit
+
+
 def run_worker(queue: str, handlers: dict[str, Callable[[dict], None]], once: bool = False) -> None:
     """Takes jobs off the queue forever. A failing job is logged and skipped."""
     key = f"rh:queue:{queue}"
