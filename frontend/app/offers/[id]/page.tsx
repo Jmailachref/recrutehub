@@ -1,256 +1,285 @@
 "use client";
 
+import Link from "next/link";
 import { useParams } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { api, ApiError, levelLabel, Offer, Recipe, RecipeRow, statusLabel, Stock } from "@/lib/api";
+import { useCallback, useEffect, useState } from "react";
+import {
+  api,
+  ApiError,
+  Candidate,
+  candidateStatusLabel,
+  levelLabel,
+  Offer,
+  priorityLabel,
+  Recipe,
+  scoreColor,
+  statusLabel,
+  TestSummary,
+  testStatusLabel,
+  topicName,
+} from "@/lib/api";
 import { useUser } from "../../AppShell";
 
-const MAX_PER_ROW = 20;
-const range = (n: number) => Array.from({ length: n + 1 }, (_, i) => i);
-
-export default function OfferPage() {
+export default function OfferDetailPage() {
   const { id } = useParams<{ id: string }>();
   const user = useUser();
   const canWrite = user?.role !== "editor";
   const [offer, setOffer] = useState<Offer | null>(null);
   const [recipe, setRecipe] = useState<Recipe | null>(null);
-  const [rows, setRows] = useState<RecipeRow[]>([]);
-  const [savedRows, setSavedRows] = useState<RecipeRow[]>([]);
-  const [stock, setStock] = useState<Stock[]>([]);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [tests, setTests] = useState<Record<string, TestSummary>>({});
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [inviting, setInviting] = useState<string | null>(null);
 
-  const run = async <T,>(action: () => Promise<T>, done?: string): Promise<T | undefined> => {
-    setError("");
-    setNotice("");
+  const load = useCallback(async () => {
     try {
-      const result = await action();
-      if (done) setNotice(done);
-      return result;
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong");
-    }
-  };
-
-  useEffect(() => {
-    run(async () => {
-      const [o, r, s] = await Promise.all([
+      const [o, r, c, t] = await Promise.all([
         api<Offer>(`/api/offers/offers/${id}`),
         api<Recipe>(`/api/offers/offers/${id}/recipe`),
-        api<Stock[]>("/api/offers/stock"),
+        api<Candidate[]>(`/api/candidates/candidates?offer_id=${id}`),
+        api<TestSummary[]>(`/api/assessments/sessions?offer_id=${id}`),
       ]);
       setOffer(o);
       setRecipe(r);
-      setRows(o.recipe);
-      setSavedRows(o.recipe);
-      setStock(s);
-    });
+      setCandidates(c);
+      setTests(Object.fromEntries(t.map((x) => [x.candidate_id, x])));
+    } catch (e) {
+      setError(e instanceof ApiError && e.status === 404 ? "Offer not found" : "Failed to load offer");
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
 
-  const stockFor = (language: string, level: number) =>
-    stock.find((s) => s.language === language && s.level === level) ?? { code: 0, qcm: 0 };
-  const languages = useMemo(() => [...new Set(stock.map((s) => s.language))].sort(), [stock]);
-  const levelsFor = (language: string) => stock.filter((s) => s.language === language).map((s) => s.level).sort();
-  const total = rows.reduce((n, r) => n + r.code_count + r.qcm_count, 0);
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  function setRow(i: number, patch: Partial<RecipeRow>) {
-    setRows(rows.map((r, j) => {
-      if (j !== i) return r;
-      const next = { ...r, ...patch };
-      // Keep counts within what the new language and level have.
-      const s = stockFor(next.language, next.level);
-      return { ...next, code_count: Math.min(next.code_count, s.code), qcm_count: Math.min(next.qcm_count, s.qcm) };
-    }));
+  const applyLink = offer && typeof window !== "undefined" ? `${window.location.origin}/apply/${offer.public_token}` : "";
+
+  function copyLink() {
+    navigator.clipboard.writeText(applyLink).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }
 
-  function addRow() {
-    const taken = new Set(rows.map((r) => `${r.language}:${r.level}`));
-    const free = stock.find((s) => !taken.has(`${s.language}:${s.level}`));
-    if (free) setRows([...rows, { language: free.language, level: free.level, code_count: 0, qcm_count: 0 }]);
-  }
-
-  async function saveDetails(e: FormEvent) {
-    e.preventDefault();
-    if (!offer) return;
-    const { title, description, question_budget, cv_score_threshold } = offer;
-    const saved = await run(
-      () => api<Offer>(`/api/offers/offers/${id}`, { method: "PATCH", body: JSON.stringify({ title, description, question_budget, cv_score_threshold }) }),
-      "Details saved.",
-    );
-    if (saved) {
-      setOffer(saved);
-      setRecipe(await api<Recipe>(`/api/offers/offers/${id}/recipe`));
+  async function publish() {
+    setActionError("");
+    try {
+      setOffer(await api<Offer>(`/api/offers/offers/${id}/publish`, { method: "POST" }));
+    } catch (e) {
+      setActionError(e instanceof ApiError ? e.message : "Could not publish the offer");
     }
   }
 
-  async function saveWeights(theory: number) {
-    const saved = await run(() =>
-      api<Offer>(`/api/offers/offers/${id}/weights`, {
-        method: "PATCH",
-        body: JSON.stringify({ weight_theory: theory, weight_practice: Math.round((1 - theory) * 100) / 100 }),
-      }),
-    );
-    if (saved) setOffer(saved);
-  }
-
-  async function saveRecipe() {
-    const saved = await run(
-      () => api<Recipe>(`/api/offers/offers/${id}/recipe`, { method: "PUT", body: JSON.stringify({ rows }) }),
-      "Test saved.",
-    );
-    if (saved) {
-      setRecipe(saved);
-      setSavedRows(rows);
+  async function invite(c: Candidate) {
+    setInviting(c.id);
+    setActionError("");
+    try {
+      await api("/api/assessments/sessions", { method: "POST", body: JSON.stringify({ candidate_id: c.id }) });
+      await load();
+    } catch (e) {
+      setActionError(e instanceof ApiError ? e.message : "Could not send the invitation");
     }
+    setInviting(null);
   }
 
-  async function setStatus(action: "publish" | "archive" | "restore") {
-    const saved = await run(() => api<Offer>(`/api/offers/offers/${id}/${action}`, { method: "POST" }));
-    if (saved) setOffer(saved);
-  }
+  if (loading) return <p className="text-gray-500">Loading…</p>;
+  if (error) return <p className="text-red-600">{error}</p>;
+  if (!offer) return null;
 
-  if (!offer) return error ? <p className="error">{error}</p> : <p className="muted">Loading…</p>;
-
-  const applyLink = typeof window !== "undefined" ? `${window.location.origin}/apply/${offer.public_token}` : "";
-  const dirty = JSON.stringify(rows) !== JSON.stringify(savedRows);
+  const all = Object.values(tests);
+  const stats = [
+    { label: "Total", value: candidates.length },
+    { label: "Invited", value: all.length },
+    { label: "Submitted", value: all.filter((t) => t.status === "submitted" || t.status === "scored").length },
+    { label: "Scored", value: all.filter((t) => t.status === "scored").length },
+  ];
+  // Best total first; candidates without a score keep their application order.
+  const ranked = [...candidates].sort((a, b) => (tests[b.id]?.total_score ?? -1) - (tests[a.id]?.total_score ?? -1));
+  const priorities = Object.fromEntries(offer.skills.map((s) => [s.language, s.priority]));
+  const canInvite = user?.role === "admin" || user?.role === "recruiter";
+  const badge =
+    offer.status === "active" ? "bg-green-100 text-green-700" : offer.status === "draft" ? "bg-yellow-100 text-yellow-700" : "bg-gray-100 text-gray-500";
 
   return (
-    <>
-      <div className="title-row">
-        <h1>{offer.title}</h1>
-        <span className={`status status-${offer.status}`}>{statusLabel[offer.status]}</span>
-        <span className="spacer" />
-        {canWrite && offer.status === "draft" && <button onClick={() => setStatus("publish")} disabled={dirty}>Publish</button>}
-        {canWrite && offer.status === "active" && <button className="secondary" onClick={() => setStatus("archive")}>Archive</button>}
-        {canWrite && offer.status === "archived" && <button className="secondary" onClick={() => setStatus("restore")}>Restore</button>}
+    <div>
+      <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
+        <div className="min-w-0">
+          <Link href="/dashboard" className="text-sm text-gray-500 hover:text-blue-600 mb-1 inline-block">
+            ← Dashboard
+          </Link>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-gray-800">{offer.title}</h1>
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${badge}`}>{statusLabel[offer.status]}</span>
+          </div>
+          {offer.description && <p className="text-gray-600 mt-1 text-sm whitespace-pre-line">{offer.description}</p>}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {canWrite && (
+            <Link
+              href={`/offers/${offer.id}/edit`}
+              className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm hover:border-blue-400 hover:text-blue-600 transition"
+            >
+              Edit offer
+            </Link>
+          )}
+          {offer.status === "active" && (
+            <button
+              onClick={copyLink}
+              className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm hover:border-blue-400 hover:text-blue-600 transition"
+            >
+              {copied ? "Copied!" : "Copy Apply Link"}
+            </button>
+          )}
+          {canWrite && offer.status === "draft" && (
+            <button onClick={publish} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700 transition">
+              Publish
+            </button>
+          )}
+        </div>
       </div>
       {offer.status === "active" && (
-        <p className="muted">
-          Apply link: <code className="select">{applyLink}</code>
+        <p className="text-xs text-gray-500 mb-4 break-all">
+          Apply link: <span className="select-all text-gray-700">{applyLink}</span>
         </p>
       )}
-      {offer.status !== "draft" && (
-        <p>
-          <a href={`/candidates?offer=${offer.id}`}>See the candidates</a>
+      {offer.status === "draft" && (
+        <p className="text-sm text-yellow-700 bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 mb-4">
+          This offer is a draft: publish it to open its apply link.
         </p>
       )}
-      {error && <p className="error">{error}</p>}
-      {notice && <p className="ok">{notice}</p>}
+      {actionError && <p className="text-red-600 text-sm mb-4">{actionError}</p>}
 
-      <section className="card stack">
-        <div className="section-head">
-          <h2>Test</h2>
-          <span className={total === offer.question_budget ? "muted num" : "warn num"}>
-            {total} of {offer.question_budget} questions
-          </span>
-        </div>
-        <p className="muted">For each language or topic and level, choose how many code and QCM questions. Every candidate gets their own random pick.</p>
-        {rows.length > 0 && (
-          <div className="table-wrap">
-            <table className="recipe">
-              <thead>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+        {stats.map((stat) => (
+          <div key={stat.label} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 text-center">
+            <p className="text-3xl font-bold text-gray-900 tabular-nums">{stat.value}</p>
+            <p className="text-sm text-gray-500 mt-1">{stat.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {recipe && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto mb-8">
+          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-3">
+            <h2 className="font-semibold text-gray-800">Test Recipe</h2>
+            <span className="text-sm text-gray-500">
+              {recipe.total} questions total · QCM {Math.round(offer.weight_theory * 100)}% / Code {Math.round(offer.weight_practice * 100)}%
+            </span>
+          </div>
+          {recipe.rows.length === 0 ? (
+            <p className="text-gray-500 text-sm text-center py-8">
+              No questions yet.{" "}
+              {canWrite && (
+                <Link href={`/offers/${offer.id}/edit`} className="text-blue-600 hover:underline">
+                  Set up the test
+                </Link>
+              )}
+            </p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wide whitespace-nowrap">
                 <tr>
-                  <th>Language or topic</th>
-                  <th>Level</th>
-                  <th>Code</th>
-                  <th>QCM</th>
-                  <th />
+                  <th className="px-5 py-3 text-left">Language / Skill</th>
+                  <th className="px-5 py-3 text-left">Priority</th>
+                  <th className="px-5 py-3 text-center">Level</th>
+                  <th className="px-5 py-3 text-center">QCM</th>
+                  <th className="px-5 py-3 text-center">Code</th>
+                  <th className="px-5 py-3 text-center">Total</th>
                 </tr>
               </thead>
-              <tbody>
-                {rows.map((r, i) => {
-                  const s = stockFor(r.language, r.level);
-                  const levels = levelsFor(r.language);
-                  const warning = recipe?.warnings.find((w) => w.row === i && w.code === "stock_low");
-                  return (
-                    <tr key={i}>
-                      <td>
-                        <select disabled={!canWrite} value={r.language} onChange={(e) => setRow(i, { language: e.target.value, level: levelsFor(e.target.value)[0] ?? 1 })}>
-                          {!languages.includes(r.language) && <option value={r.language}>{r.language}</option>}
-                          {languages.map((l) => <option key={l} value={l}>{l}</option>)}
-                        </select>
-                        {warning && !dirty && <div className="error small">{warning.message}</div>}
-                      </td>
-                      <td>
-                        <select disabled={!canWrite} value={r.level} onChange={(e) => setRow(i, { level: Number(e.target.value) })}>
-                          {!levels.includes(r.level) && <option value={r.level}>{r.level} · {levelLabel[r.level]}</option>}
-                          {levels.map((l) => <option key={l} value={l}>{l} · {levelLabel[l]}</option>)}
-                        </select>
-                      </td>
-                      <td>
-                        <select disabled={!canWrite || s.code === 0} value={r.code_count} onChange={(e) => setRow(i, { code_count: Number(e.target.value) })}>
-                          {range(Math.max(r.code_count, Math.min(MAX_PER_ROW, s.code))).map((n) => <option key={n} value={n}>{n}</option>)}
-                        </select>
-                        <span className="muted small"> of {s.code}</span>
-                      </td>
-                      <td>
-                        <select disabled={!canWrite || s.qcm === 0} value={r.qcm_count} onChange={(e) => setRow(i, { qcm_count: Number(e.target.value) })}>
-                          {range(Math.max(r.qcm_count, Math.min(MAX_PER_ROW, s.qcm))).map((n) => <option key={n} value={n}>{n}</option>)}
-                        </select>
-                        <span className="muted small"> of {s.qcm}</span>
-                      </td>
-                      <td>
-                        {canWrite && <button className="link" onClick={() => setRows(rows.filter((_, j) => j !== i))}>Remove</button>}
-                      </td>
-                    </tr>
-                  );
-                })}
+              <tbody className="divide-y divide-gray-100">
+                {recipe.rows.map((row) => (
+                  <tr key={row.language} className="hover:bg-gray-50 transition">
+                    <td className="px-5 py-3 font-medium text-gray-900">{topicName(row.language)}</td>
+                    <td className="px-5 py-3 text-gray-600">
+                      {priorities[row.language] ? `P${priorities[row.language]} — ${priorityLabel[priorities[row.language]]}` : "—"}
+                    </td>
+                    <td className="px-5 py-3 text-center text-gray-600">
+                      {row.level} · {levelLabel[row.level]}
+                    </td>
+                    <td className="px-5 py-3 text-center text-gray-600 tabular-nums">{row.qcm_count}</td>
+                    <td className="px-5 py-3 text-center text-gray-600 tabular-nums">{row.code_count}</td>
+                    <td className="px-5 py-3 text-center font-semibold text-gray-800 tabular-nums">{row.qcm_count + row.code_count}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
-          </div>
-        )}
-        {stock.length === 0 && <p className="muted">The question bank is empty. Add questions to Code Playground first.</p>}
-        {canWrite && (
-          <div className="row">
-            <button className="secondary" onClick={addRow} disabled={rows.length >= stock.length}>Add a row</button>
-            <button onClick={saveRecipe} disabled={!dirty}>Save test</button>
-          </div>
-        )}
-      </section>
-
-      <form className="card stack" onSubmit={saveDetails}>
-        <h2>Details</h2>
-        <label>
-          Title
-          <input disabled={!canWrite} value={offer.title} required onChange={(e) => setOffer({ ...offer, title: e.target.value })} />
-        </label>
-        <label>
-          Description, shown on the apply page
-          <textarea disabled={!canWrite} rows={6} value={offer.description} onChange={(e) => setOffer({ ...offer, description: e.target.value })} />
-        </label>
-        <div className="row">
-          <label>
-            Questions in the test
-            <input disabled={!canWrite} type="number" min={1} max={100} value={offer.question_budget} onChange={(e) => setOffer({ ...offer, question_budget: Number(e.target.value) })} />
-          </label>
-          <label>
-            CV score needed for a test (0–100)
-            <input disabled={!canWrite} type="number" min={0} max={100} value={offer.cv_score_threshold} onChange={(e) => setOffer({ ...offer, cv_score_threshold: Number(e.target.value) })} />
-          </label>
+          )}
+          {recipe.warnings
+            .filter((w) => w.code === "stock_low")
+            .map((w, i) => (
+              <p key={i} className="px-5 py-2 text-sm text-yellow-800 bg-yellow-50 border-t border-yellow-200">
+                ⚠️ {w.message}
+              </p>
+            ))}
         </div>
-        {canWrite && <div><button type="submit">Save details</button></div>}
-      </form>
+      )}
 
-      <section className="card stack">
-        <h2>Scoring</h2>
-        <p className="muted">How much each part counts in the final score.</p>
-        <label className="weights">
-          <span className="num">QCM {Math.round(offer.weight_theory * 100)}%</span>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={5}
-            disabled={!canWrite}
-            value={Math.round(offer.weight_theory * 100)}
-            onChange={(e) => setOffer({ ...offer, weight_theory: Number(e.target.value) / 100, weight_practice: 1 - Number(e.target.value) / 100 })}
-            onMouseUp={(e) => saveWeights(Number((e.target as HTMLInputElement).value) / 100)}
-            onTouchEnd={(e) => saveWeights(Number((e.target as HTMLInputElement).value) / 100)}
-            onKeyUp={(e) => saveWeights(Number((e.target as HTMLInputElement).value) / 100)}
-          />
-          <span className="num">Code {Math.round((1 - offer.weight_theory) * 100)}%</span>
-        </label>
-      </section>
-    </>
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h2 className="font-semibold text-gray-800">Candidates</h2>
+          <span className="text-sm text-gray-500">{candidates.length} total</span>
+        </div>
+        {candidates.length === 0 ? (
+          <p className="text-gray-500 text-sm text-center py-10">No candidates yet.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wide whitespace-nowrap">
+              <tr>
+                <th className="px-5 py-3 text-left">Rank</th>
+                <th className="px-5 py-3 text-left">Name</th>
+                <th className="px-5 py-3 text-left">Email</th>
+                <th className="px-5 py-3 text-left">Status</th>
+                <th className="px-5 py-3 text-right">CV Score</th>
+                <th className="px-5 py-3 text-right">Final Score</th>
+                <th className="px-5 py-3"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {ranked.map((c, i) => {
+                const t = tests[c.id];
+                const scored = t?.total_score != null;
+                return (
+                  <tr key={c.id} className="hover:bg-gray-50 transition">
+                    <td className="px-5 py-3 text-gray-500 tabular-nums">{scored ? i + 1 : "—"}</td>
+                    <td className="px-5 py-3 font-medium text-gray-900">{c.name}</td>
+                    <td className="px-5 py-3 text-gray-600">{c.email}</td>
+                    <td className="px-5 py-3">
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 whitespace-nowrap">
+                        {t ? testStatusLabel[t.status] : candidateStatusLabel[c.status]}
+                      </span>
+                    </td>
+                    <td className={`px-5 py-3 text-right tabular-nums ${scoreColor(c.cv_score)}`}>
+                      {c.cv_score != null ? c.cv_score.toFixed(1) : "—"}
+                    </td>
+                    <td className={`px-5 py-3 text-right tabular-nums ${scoreColor(t?.total_score)}`}>
+                      {scored ? t.total_score!.toFixed(1) : "—"}
+                    </td>
+                    <td className="px-5 py-3 text-right whitespace-nowrap">
+                      {!t && canInvite && offer.status !== "archived" && (
+                        <button
+                          onClick={() => invite(c)}
+                          disabled={inviting === c.id}
+                          className="text-xs mr-3 px-2 py-1 rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 disabled:opacity-50 transition"
+                        >
+                          {inviting === c.id ? "Sending…" : "Invite to test"}
+                        </button>
+                      )}
+                      <Link href={`/offers/${offer.id}/candidates/${c.id}`} className="text-blue-600 hover:underline text-xs">
+                        View
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
   );
 }

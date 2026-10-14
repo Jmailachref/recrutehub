@@ -37,33 +37,35 @@ export default function TeamPage() {
     }
   }
 
-  if (me?.role !== "admin") return <p className="muted">Only admins can manage the team.</p>;
+  if (me?.role !== "admin") return <p className="text-gray-500">Only admins can manage the team.</p>;
 
+  const field = "border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500";
   return (
-    <>
-      <h1>Team</h1>
-      <p className="muted">People at {me.tenant_name} who can sign in.</p>
-      {error && <p className="error">{error}</p>}
-      <div className="table-wrap">
-        <table>
-          <thead>
+    <div>
+      <h1 className="text-2xl font-bold text-gray-800">Team</h1>
+      <p className="text-gray-500 text-sm mt-1 mb-6">People at {me.tenant_name} who can sign in.</p>
+      {error && <p className="text-red-600 text-sm mb-4">{error}</p>}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto mb-6">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wide whitespace-nowrap">
             <tr>
-              <th>Name</th>
-              <th>Email</th>
-              <th>Role</th>
-              <th>Access</th>
+              <th className="px-5 py-3 text-left">Name</th>
+              <th className="px-5 py-3 text-left">Email</th>
+              <th className="px-5 py-3 text-left">Role</th>
+              <th className="px-5 py-3 text-right">Access</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-gray-100">
             {users.map((u) => (
-              <tr key={u.id} className={u.is_active ? "" : "inactive"}>
-                <td>{u.full_name || "—"}</td>
-                <td>{u.email}</td>
-                <td>
+              <tr key={u.id} className={u.is_active ? "hover:bg-gray-50" : "text-gray-400"}>
+                <td className="px-5 py-3 font-medium">{u.full_name || "—"}</td>
+                <td className="px-5 py-3">{u.email}</td>
+                <td className="px-5 py-3">
                   <select
                     value={u.role}
                     disabled={u.id === me.id}
                     onChange={(e) => change(u, { role: e.target.value as User["role"] })}
+                    className="border border-gray-300 rounded px-1 py-0.5 text-sm bg-white disabled:opacity-60"
                   >
                     {Object.entries(roleLabel).map(([value, label]) => (
                       <option key={value} value={value}>
@@ -72,11 +74,14 @@ export default function TeamPage() {
                     ))}
                   </select>
                 </td>
-                <td>
+                <td className="px-5 py-3 text-right">
                   {u.id === me.id ? (
-                    <span className="muted">You</span>
+                    <span className="text-gray-400 text-xs">You</span>
                   ) : (
-                    <button className="link" onClick={() => change(u, { is_active: !u.is_active })}>
+                    <button
+                      onClick={() => change(u, { is_active: !u.is_active })}
+                      className={`text-xs ${u.is_active ? "text-red-500 hover:underline" : "text-blue-600 hover:underline"}`}
+                    >
                       {u.is_active ? "Disable" : "Enable"}
                     </button>
                   )}
@@ -87,11 +92,11 @@ export default function TeamPage() {
         </table>
       </div>
 
-      <form className="card add-user" onSubmit={add}>
-        <h2>Add someone</h2>
-        <div className="row">
-          <input placeholder="Full name" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
-          <input type="email" placeholder="Email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+      <form className="bg-white rounded-xl border border-gray-200 shadow-sm p-6" onSubmit={add}>
+        <h2 className="font-semibold text-gray-800 mb-4">Add someone</h2>
+        <div className="flex flex-wrap gap-3">
+          <input placeholder="Full name" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} className={`${field} flex-1 min-w-40`} />
+          <input type="email" placeholder="Email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={`${field} flex-1 min-w-40`} />
           <input
             type="password"
             placeholder="Temporary password"
@@ -99,17 +104,20 @@ export default function TeamPage() {
             required
             value={form.password}
             onChange={(e) => setForm({ ...form, password: e.target.value })}
+            className={`${field} flex-1 min-w-40`}
           />
-          <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+          <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className={field}>
             {Object.entries(roleLabel).map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
               </option>
             ))}
           </select>
-          <button type="submit">Add</button>
+          <button type="submit" className="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700 transition">
+            Add
+          </button>
         </div>
       </form>
-    </>
+    </div>
   );
 }

@@ -60,6 +60,39 @@ export type OfferStatus = "draft" | "active" | "archived";
 
 export type RecipeRow = { language: string; level: number; code_count: number; qcm_count: number };
 
+export type Skill = { language: string; priority: number };
+
+export const priorityLabel: Record<number, string> = {
+  1: "Core",
+  2: "Important",
+  3: "Secondary",
+  4: "CV only",
+  5: "Bonus",
+};
+
+const TOPIC_NAMES: Record<string, string> = {
+  python: "Python",
+  javascript: "JavaScript",
+  typescript: "TypeScript",
+  java: "Java",
+  cpp: "C++",
+  go: "Go",
+  sql: "SQL",
+  docker: "Docker",
+  kubernetes: "Kubernetes",
+};
+export const topicName = (t: string) => TOPIC_NAMES[t] ?? t.charAt(0).toUpperCase() + t.slice(1);
+
+// How the skill picker groups the question bank's languages and topics.
+const TOPIC_GROUPS: Record<string, string> = {
+  sql: "Databases",
+  docker: "DevOps",
+  kubernetes: "DevOps",
+  git: "DevOps",
+  linux: "DevOps",
+};
+export const topicGroup = (t: string) => TOPIC_GROUPS[t] ?? "Programming languages";
+
 export type Offer = {
   id: string;
   title: string;
@@ -71,16 +104,18 @@ export type Offer = {
   cv_score_threshold: number;
   weight_theory: number;
   weight_practice: number;
+  skills: Skill[];
   recipe: RecipeRow[];
+  created_at: string | null;
 };
 
-export type OfferSummary = Pick<Offer, "id" | "title" | "status" | "question_count" | "question_budget">;
+export type OfferSummary = Pick<Offer, "id" | "title" | "status" | "question_count" | "question_budget" | "created_at">;
 
 export type Recipe = {
   rows: (RecipeRow & { stock_code: number; stock_qcm: number; available_levels: number[] })[];
   total: number;
   budget: number;
-  warnings: { code: string; message: string; row: number | null }[];
+  warnings: { code: string; message: string; row: number | null; skill: string | null }[];
 };
 
 export type Stock = { language: string; level: number; code: number; qcm: number };
@@ -178,4 +213,12 @@ export const verdictLabel: Record<string, string> = {
   no_answer: "Not answered",
   correct: "Correct",
   wrong: "Wrong",
+};
+
+// Scores are percentages: green from 70, amber from 40.
+export const scoreColor = (score: number | null | undefined) => {
+  if (score == null) return "text-gray-400";
+  if (score >= 70) return "text-green-600 font-semibold";
+  if (score >= 40) return "text-yellow-600 font-semibold";
+  return "text-red-600 font-semibold";
 };

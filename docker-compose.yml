@@ -68,6 +68,7 @@ services:
     environment:
       <<: *env
       DATABASE_URL: postgresql+psycopg://offers:offers@postgres:5432/offers_db
+      SERVICE_NAME: offers
       CODEPLAY_URL: http://codeplay-api:8000
       CODEPLAY_API_KEY: ${CODEPLAY_API_KEY:-recrutehub-dev-key}
 

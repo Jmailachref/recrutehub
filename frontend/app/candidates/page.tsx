@@ -10,12 +10,13 @@ import {
   Candidate,
   candidateStatusLabel,
   OfferSummary,
+  scoreColor,
   TestSummary,
   testStatusLabel,
 } from "@/lib/api";
 
 function score(t: TestSummary | undefined): string {
-  return t?.total_score != null ? `${Math.round(t.total_score)}%` : "";
+  return t?.total_score != null ? t.total_score.toFixed(1) : "—";
 }
 
 function Candidates() {
@@ -71,11 +72,14 @@ function Candidates() {
   );
 
   return (
-    <>
-      <div className="title-row">
-        <h1>Candidates</h1>
-        <span className="spacer" />
-        <select value={offerId} onChange={(e) => router.replace(e.target.value ? `/candidates?offer=${e.target.value}` : "/candidates")}>
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+        <h1 className="text-2xl font-bold text-gray-800">Candidates</h1>
+        <select
+          value={offerId}
+          onChange={(e) => router.replace(e.target.value ? `/candidates?offer=${e.target.value}` : "/candidates")}
+          className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
           <option value="">All offers</option>
           {offers.map((o) => (
             <option key={o.id} value={o.id}>
@@ -84,54 +88,61 @@ function Candidates() {
           ))}
         </select>
       </div>
-      {error && <p className="error">{error}</p>}
+      {error && <p className="text-red-600 text-sm mb-4">{error}</p>}
       {!candidates ? (
-        !error && <p className="muted">Loading…</p>
+        !error && <p className="text-gray-500">Loading…</p>
       ) : candidates.length === 0 ? (
-        <p className="muted">No applications yet. Share an open offer&apos;s apply link to get some.</p>
+        <p className="text-center py-16 text-gray-500">No applications yet. Share an open offer&apos;s apply link to get some.</p>
       ) : (
-        <div className="table-wrap">
-          <table>
-            <thead>
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wide whitespace-nowrap">
               <tr>
-                <th>Name</th>
-                {!offerId && <th>Offer</th>}
-                <th>Applied</th>
-                <th>Status</th>
-                <th>CV</th>
-                <th>Test</th>
-                <th>Score</th>
+                <th className="px-5 py-3 text-left">Name</th>
+                {!offerId && <th className="px-5 py-3 text-left">Offer</th>}
+                <th className="px-5 py-3 text-left">Applied</th>
+                <th className="px-5 py-3 text-left">Status</th>
+                <th className="px-5 py-3 text-right">Final Score</th>
+                <th className="px-5 py-3"></th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-gray-100">
               {rows.map((c) => {
                 const t = tests[c.id];
                 return (
-                  <tr key={c.id}>
-                    <td>
-                      {c.name}
-                      <div className="muted small">{c.email}</div>
+                  <tr key={c.id} className="hover:bg-gray-50 transition">
+                    <td className="px-5 py-3">
+                      <span className="font-medium text-gray-900">{c.name}</span>
+                      <div className="text-xs text-gray-500">{c.email}</div>
                     </td>
-                    {!offerId && <td>{titles[c.offer_id] ?? "…"}</td>}
-                    <td className="num">{new Date(c.created_at).toLocaleDateString()}</td>
-                    <td>{candidateStatusLabel[c.status]}</td>
-                    <td>
-                      <a href={`/api/candidates/candidates/${c.id}/cv`} target="_blank" rel="noopener">
-                        PDF
-                      </a>
+                    {!offerId && (
+                      <td className="px-5 py-3 text-gray-600">
+                        <Link href={`/offers/${c.offer_id}`} className="hover:text-blue-600">
+                          {titles[c.offer_id] ?? "…"}
+                        </Link>
+                      </td>
+                    )}
+                    <td className="px-5 py-3 text-gray-600 tabular-nums">{new Date(c.created_at).toLocaleDateString()}</td>
+                    <td className="px-5 py-3">
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 whitespace-nowrap">
+                        {t ? testStatusLabel[t.status] : candidateStatusLabel[c.status]}
+                      </span>
                     </td>
-                    <td>
-                      {t ? (
-                        <Link href={`/tests/${t.id}`}>{testStatusLabel[t.status]}</Link>
-                      ) : canInvite ? (
-                        <button className="secondary" onClick={() => invite(c)} disabled={inviting === c.id}>
+                    <td className={`px-5 py-3 text-right tabular-nums ${scoreColor(t?.total_score)}`}>{score(t)}</td>
+                    <td className="px-5 py-3 text-right whitespace-nowrap">
+                      {!t && canInvite && (
+                        <button
+                          onClick={() => invite(c)}
+                          disabled={inviting === c.id}
+                          className="text-xs mr-3 px-2 py-1 rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 disabled:opacity-50 transition"
+                        >
                           {inviting === c.id ? "Sending…" : "Invite to test"}
                         </button>
-                      ) : (
-                        <span className="muted">Not invited</span>
                       )}
+                      <Link href={`/offers/${c.offer_id}/candidates/${c.id}`} className="text-blue-600 hover:underline text-xs">
+                        View
+                      </Link>
                     </td>
-                    <td className="num score">{score(t)}</td>
                   </tr>
                 );
               })}
@@ -139,7 +150,7 @@ function Candidates() {
           </table>
         </div>
       )}
-    </>
+    </div>
   );
 }
 

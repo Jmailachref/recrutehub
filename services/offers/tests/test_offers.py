@@ -102,3 +102,57 @@ def test_internal_endpoints_need_a_service_token(client):
 
 def test_stock_for_the_editor(client):
     assert len(client.get("/stock", headers=RECRUITER).json()) == 4
+
+
+SKILLS = [
+    {"language": "python", "priority": 1},
+    {"language": "docker", "priority": 2},
+    {"language": "sql", "priority": 3},
+    {"language": "rust", "priority": 2},
+    {"language": "go", "priority": 4},
+]
+
+
+def test_skills_are_kept_and_appear_once(client):
+    offer = new_offer(client, skills=SKILLS)
+    assert offer["skills"] == SKILLS
+    dup = [{"language": "sql", "priority": 1}, {"language": "sql", "priority": 2}]
+    assert client.post("/offers", json={"title": "x", "skills": dup}, headers=RECRUITER).status_code == 400
+    r = client.patch(f"/offers/{offer['id']}", json={"skills": SKILLS[:1]}, headers=RECRUITER)
+    assert r.json()["skills"] == SKILLS[:1]
+
+
+def test_generate_recipe_from_priorities(client):
+    offer = new_offer(client, skills=SKILLS, question_budget=16)
+    r = client.post(f"/offers/{offer['id']}/recipe/generate", headers=RECRUITER)
+    assert r.status_code == 200, r.text
+    recipe = r.json()
+    rows = {row["language"]: row for row in recipe["rows"]}
+    # rust has no questions and go is CV only; python (core) has no level 3, so level 5.
+    assert list(rows) == ["python", "docker", "sql"]
+    assert (rows["python"]["level"], rows["docker"]["level"], rows["sql"]["level"]) == (5, 2, 3)
+    assert rows["docker"]["code_count"] == 0 and rows["sql"]["qcm_count"] == 0
+    assert recipe["total"] == 16
+    assert {(w["code"], w["skill"]) for w in recipe["warnings"]} >= {("no_stock", "rust"), ("level_adjusted", "python")}
+    assert all(w["code"] != "budget_mismatch" for w in recipe["warnings"])
+
+
+def test_generate_stops_at_stock(client):
+    offer = new_offer(client, skills=[{"language": "sql", "priority": 1}], question_budget=10)
+    recipe = client.post(f"/offers/{offer['id']}/recipe/generate", headers=RECRUITER).json()
+    assert recipe["rows"][0]["code_count"] == 4 and recipe["total"] == 4
+    assert [w["code"] for w in recipe["warnings"]] == ["stock_reduced", "budget_mismatch"]
+
+
+def test_delete_only_without_candidates(client, monkeypatch):
+    import app.main
+
+    applied = {"count": 2}
+    monkeypatch.setattr(app.main.internal, "call", lambda method, service, path: dict(applied))
+    offer = new_offer(client)
+    r = client.delete(f"/offers/{offer['id']}", headers=RECRUITER)
+    assert r.status_code == 409 and r.json()["error"]["code"] == "has_candidates"
+    assert client.delete(f"/offers/{offer['id']}", headers=token("editor")).status_code == 403
+    applied["count"] = 0
+    assert client.delete(f"/offers/{offer['id']}", headers=RECRUITER).status_code == 204
+    assert client.get(f"/offers/{offer['id']}", headers=RECRUITER).status_code == 404

@@ -1,3 +1,5 @@
+import uuid
+
 from conftest import ACME, GLOBEX, PDF, apply, token
 
 from app.main import MAX_CV_BYTES
@@ -96,3 +98,6 @@ def test_internal_read_and_status(client):
     assert r.json()["status"] == "invited"
     assert client.get(f"/candidates/{cid}", headers=token()).json()["status"] == "invited"
     assert client.get(f"/internal/candidates/{cid}", headers=token()).status_code == 403
+    offer_id = c["offer_id"]
+    assert client.get(f"/internal/offers/{offer_id}/count", headers=service).json() == {"count": 1}
+    assert client.get(f"/internal/offers/{uuid.uuid4()}/count", headers=service).json() == {"count": 0}

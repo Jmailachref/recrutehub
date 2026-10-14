@@ -1,13 +1,15 @@
 import uuid
+from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import Depends, Query
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AfterValidator, BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.generator import generate
 from app.models import JobOffer, RecipeRow
-from rh_common import ApiError, Principal, create_app, require_role
+from rh_common import ApiError, Principal, create_app, internal, require_role
 from rh_common.codeplay import CodePlayground, codeplay
 from rh_common.db import get_session
 
@@ -22,11 +24,26 @@ Topic = Annotated[str, Field(min_length=1, max_length=30, pattern=r"^[a-z0-9][a-
 MAX_PER_ROW = 20
 
 
+class SkillIn(BaseModel):
+    language: Topic
+    priority: int = Field(ge=1, le=5, description="1 core, 2 important, 3 secondary (tested); 4 CV only, 5 bonus")
+
+
+def distinct_languages(skills: list[SkillIn]) -> list[SkillIn]:
+    if len({s.language for s in skills}) != len(skills):
+        raise ValueError("each skill appears once in an offer")
+    return skills
+
+
+Skills = Annotated[list[SkillIn], Field(max_length=30), AfterValidator(distinct_languages)]
+
+
 class OfferIn(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     description: str = Field(default="", max_length=20_000)
     question_budget: int = Field(default=20, ge=1, le=100)
     cv_score_threshold: int = Field(default=60, ge=0, le=100)
+    skills: Skills = []
 
 
 class OfferUpdate(BaseModel):
@@ -34,6 +51,7 @@ class OfferUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=20_000)
     question_budget: int | None = Field(default=None, ge=1, le=100)
     cv_score_threshold: int | None = Field(default=None, ge=0, le=100)
+    skills: Skills | None = None
 
 
 class WeightsIn(BaseModel):
@@ -72,9 +90,10 @@ class RecipeRowOut(RecipeRowIn):
 
 
 class RecipeWarning(BaseModel):
-    code: Literal["budget_mismatch", "stock_low", "empty"]
+    code: Literal["budget_mismatch", "stock_low", "empty", "no_stock", "level_adjusted", "stock_reduced"]
     message: str
     row: int | None = None
+    skill: str | None = None
 
 
 class RecipeOut(BaseModel):
@@ -90,6 +109,7 @@ class OfferSummary(BaseModel):
     status: str
     question_count: int
     question_budget: int
+    created_at: datetime | None = None
 
 
 class OfferOut(OfferSummary):
@@ -98,6 +118,7 @@ class OfferOut(OfferSummary):
     cv_score_threshold: int
     weight_theory: float
     weight_practice: float
+    skills: list[SkillIn]
     recipe: list[RecipeRowIn]
 
 
@@ -133,6 +154,7 @@ def offer_out(offer: JobOffer, model=OfferOut, **extra):
         id=offer.id,
         title=offer.title,
         status=offer.status,
+        created_at=offer.created_at,
         question_count=total(offer),
         question_budget=offer.question_budget,
         description=offer.description,
@@ -140,6 +162,7 @@ def offer_out(offer: JobOffer, model=OfferOut, **extra):
         cv_score_threshold=offer.cv_score_threshold,
         weight_theory=offer.weight_theory,
         weight_practice=offer.weight_practice,
+        skills=offer.skills or [],
         recipe=rows_of(offer),
         **extra,
     )
@@ -202,7 +225,12 @@ def list_offers(
         query = query.where(JobOffer.status == status)
     return [
         OfferSummary(
-            id=o.id, title=o.title, status=o.status, question_count=total(o), question_budget=o.question_budget
+            id=o.id,
+            title=o.title,
+            status=o.status,
+            question_count=total(o),
+            question_budget=o.question_budget,
+            created_at=o.created_at,
         )
         for o in db.scalars(query)
     ]
@@ -229,6 +257,17 @@ def update_offer(offer_id: uuid.UUID, body: OfferUpdate, db: Db, user: Writer) -
         setattr(offer, field, value)
     db.commit()
     return offer_out(offer)
+
+
+@app.delete("/offers/{offer_id}", status_code=204, tags=["offers"])
+def delete_offer(offer_id: uuid.UUID, db: Db, user: Writer) -> None:
+    """Deletes an offer nobody applied to. Offers with applications are archived instead."""
+    offer = own_offer(db, user, offer_id)
+    count = internal.call("GET", "candidates", f"/internal/offers/{offer_id}/count")["count"]
+    if count:
+        raise ApiError(409, "has_candidates", f"{count} candidate(s) applied to this offer: archive it instead")
+    db.delete(offer)
+    db.commit()
 
 
 @app.patch("/offers/{offer_id}/weights", response_model=OfferOut, tags=["offers"])
@@ -301,6 +340,24 @@ def replace_recipe(offer_id: uuid.UUID, body: RecipeIn, db: Db, user: Writer, ba
     db.commit()
     db.refresh(offer)
     return recipe_out(offer, stock)
+
+
+@app.post("/offers/{offer_id}/recipe/generate", response_model=RecipeOut, tags=["recipe"])
+def generate_recipe(offer_id: uuid.UUID, db: Db, user: Writer, bank: Bank) -> RecipeOut:
+    """Replaces the recipe with one built from the offer's skills, priorities and budget.
+
+    Core skills (priority 1) get three times the questions of secondary ones
+    (3), important ones (2) twice. The recruiter can then change any row.
+    """
+    offer = own_offer(db, user, offer_id)
+    stock = stock_index(bank)
+    rows, notes = generate(offer.skills or [], offer.question_budget, stock)
+    offer.recipe = [RecipeRow(position=i, **row) for i, row in enumerate(rows)]
+    db.commit()
+    db.refresh(offer)
+    out = recipe_out(offer, stock)
+    out.warnings = [RecipeWarning(**n) for n in notes] + out.warnings
+    return out
 
 
 @app.get("/stock", response_model=list[StockRow], tags=["recipe"])
