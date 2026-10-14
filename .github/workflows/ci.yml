@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [libs/common, services/auth, services/offers, services/questions, services/candidates, services/assessments, services/notifications]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: libs/common/pyproject.toml
+      - run: pip install ./libs/common pytest
+      - run: python -m pytest -q
+        working-directory: ${{ matrix.package }}
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  stack:
+    runs-on: ubuntu-latest
+    env:
+      CODEPLAY_SOURCE: ./.codeplay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Jmailachref/code-playground
+          path: .codeplay
+      - name: Start every container
+        run: docker compose up -d --build
+      - name: Smoke test through the gateway
+        run: sh e2e/smoke.sh http://localhost
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail 100
