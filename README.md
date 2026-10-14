@@ -53,12 +53,21 @@ Check a running stack: `sh e2e/smoke.sh http://localhost`.
 
 ## Offers
 
-A recruiter creates an offer, then sets its test: for each language or topic
-and level, how many code and QCM questions (for example Python level 5: 4 code
-and 1 QCM; Docker level 2: 6 QCM). The editor only offers counts the question
-bank in Code Playground can fill. Publishing opens the offer's apply link
-(`/apply/<token>`); archiving closes it. Each candidate's questions are drawn
-by Code Playground when they are invited.
+The dashboard lists the offers as cards (active and archived tabs) with their
+candidates and scored tests. **New Offer** asks for a title, a description, a
+question budget, the score weights and the skills (the languages and topics
+of the question bank), each with a priority: P1 core, P2 important, P3
+secondary are tested; P4 CV only and P5 bonus are not. **Generate recipe**
+shares the budget 3:2:1 between P1, P2 and P3 skills, at the level closest to
+3 that has questions, about 60% QCM and 40% code, within what Code Playground
+has. The recruiter then changes any level or count and validates, which
+publishes the offer and opens its apply link (`/apply/<token>`); archiving
+closes it. Offers nobody applied to can be deleted. Each candidate's questions
+are drawn by Code Playground when they are invited.
+
+The offer page shows the apply link, the counts (applied, invited, submitted,
+scored), the test recipe and the candidates ranked by final score; each one
+opens to their CV, scores and every answer.
 
 ## Applications
 

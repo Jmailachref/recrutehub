@@ -4,7 +4,7 @@ import secrets
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text, Uuid, func
+from sqlalchemy import JSON, CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from rh_common.db import Base
@@ -33,6 +33,9 @@ class JobOffer(Base):
     cv_score_threshold: Mapped[int] = mapped_column(Integer, default=60)
     weight_theory: Mapped[float] = mapped_column(Float, default=0.5)
     weight_practice: Mapped[float] = mapped_column(Float, default=0.5)
+    # What the recruiter asked for: [{"language": "python", "priority": 1}, ...].
+    # Priorities 1-3 are tested; 4 (CV only) and 5 (bonus) are not.
+    skills: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from fastapi import Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -206,6 +206,12 @@ def internal_candidate(candidate_id: uuid.UUID, db: Db, _: Service) -> InternalC
     if c is None:
         raise ApiError(404, "not_found", "Candidate not found")
     return internal_out(c)
+
+
+@app.get("/internal/offers/{offer_id}/count", tags=["internal"])
+def internal_count(offer_id: uuid.UUID, db: Db, _: Service) -> dict:
+    """How many applications an offer has (offers refuses to delete one that has any)."""
+    return {"count": db.scalar(select(func.count()).select_from(Candidate).where(Candidate.offer_id == offer_id))}
 
 
 @app.post("/internal/candidates/{candidate_id}/status", response_model=InternalCandidateOut, tags=["internal"])

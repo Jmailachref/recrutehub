@@ -21,16 +21,18 @@ export default function CodeEditor({
   onChange,
   readOnly = false,
   height = "420px",
+  light = false,
 }: {
   language: string;
   value: string;
   onChange?: (value: string) => void;
   readOnly?: boolean;
   height?: string;
+  light?: boolean;
 }) {
-  const dark = typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const dark = !light && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches;
   return (
-    <div className="editor">
+    <div className="editor overflow-hidden rounded-lg border border-gray-200">
       <Editor
         height={height}
         language={MONACO_LANGUAGE[language] ?? "plaintext"}
@@ -45,7 +47,7 @@ export default function CodeEditor({
           automaticLayout: true,
           tabSize: 4,
         }}
-        loading={<p className="muted small">Loading the editor…</p>}
+        loading={<p className="p-3 text-sm text-gray-500">Loading the editor…</p>}
       />
     </div>
   );
