@@ -2,12 +2,17 @@
   "name": "recrutehub-frontend",
   "private": true,
   "scripts": {
+    "copy-monaco": "node scripts/copy-monaco.mjs",
+    "predev": "npm run copy-monaco",
     "dev": "next dev",
+    "prebuild": "npm run copy-monaco",
     "build": "next build",
     "start": "next start"
   },
   "dependencies": {
+    "@monaco-editor/react": "4.7.0",
     "jose": "6.2.12",
+    "monaco-editor": "0.52.2",
     "next": "15.5.27",
     "react": "19.2.8",
     "react-dom": "19.2.8"

@@ -35,6 +35,36 @@ class CodePlayground:
         """[{language, level, code, qcm}] counts of approved questions."""
         return self._call("GET", "/v1/stock", params={"language": language} if language else None)
 
+    def create_test(self, recipe: list[dict], scope: str, external_ref: str) -> dict:
+        """Draws and freezes one candidate's questions. 409 not_enough_questions when the bank is short."""
+        return self._call("POST", "/v1/tests", json={"recipe": recipe, "scope": scope, "external_ref": external_ref})
+
+    def test(self, test_id: str) -> dict:
+        """The frozen test as the candidate sees it: no hidden test cases, no right answers."""
+        return self._call("GET", f"/v1/tests/{test_id}")
+
+    def problem_full(self, problem_id: str) -> dict:
+        """One question with its right answers and hidden test cases."""
+        return self._call("GET", f"/v1/problems/{problem_id}/full")
+
+    def create_run(self, language: str, source_code: str, stdin: str, user_id: str) -> dict:
+        return self._call(
+            "POST", "/v1/runs", json={"language": language, "source_code": source_code, "stdin": stdin, "user_id": user_id}
+        )
+
+    def run(self, run_id: str) -> dict:
+        return self._call("GET", f"/v1/runs/{run_id}")
+
+    def create_submission(self, problem_id: str, language: str, source_code: str, user_id: str) -> dict:
+        return self._call(
+            "POST",
+            "/v1/submissions",
+            json={"problem_id": problem_id, "language": language, "source_code": source_code, "user_id": user_id},
+        )
+
+    def submission(self, submission_id: str) -> dict:
+        return self._call("GET", f"/v1/submissions/{submission_id}")
+
 
 _default: CodePlayground | None = None
 
