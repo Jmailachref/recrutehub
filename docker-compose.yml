@@ -13,7 +13,9 @@ x-service: &service
 
 x-env: &env
   REDIS_URL: redis://redis:6379/0
+  AUTH_URL: http://auth:8000
   AUTH_JWKS_URL: http://auth:8000/jwks
+  SERVICE_SECRET: ${SERVICE_SECRET:-dev-service-secret}
 
 x-codeplay: &codeplay
   build: ${CODEPLAY_SOURCE:-../code-playground}
@@ -48,6 +50,15 @@ services:
     environment:
       <<: *env
       DATABASE_URL: postgresql+psycopg://auth:auth@postgres:5432/auth_db
+      # The signing key is created on first start and kept on this volume.
+      AUTH_PRIVATE_KEY_FILE: /keys/private.pem
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      # Development admin, created on start when the email does not exist yet.
+      BOOTSTRAP_TENANT: Demo company
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-admin1234}
+    volumes:
+      - authkeys:/keys
 
   offers:
     <<: *service
@@ -193,5 +204,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  authkeys:
   pgdata:
   s3data:
