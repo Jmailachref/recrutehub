@@ -135,9 +135,13 @@ services:
     environment: &notifications-env
       <<: *env
       DATABASE_URL: postgresql+psycopg://notifications:notifications@postgres:5432/notifications_db
-      SMTP_HOST: mailpit
-      SMTP_PORT: "1025"
-      MAIL_FROM: RecruteHub <no-reply@recrutehub.local>
+      # Mailpit catches every email unless SMTP_HOST points to a real provider.
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-RecruteHub <no-reply@recrutehub.local>}
 
   notifications-worker:
     <<: *service

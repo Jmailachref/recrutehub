@@ -90,6 +90,19 @@ cases passed), theory the share of QCM answered right, and the total weighs
 them with the offer's weights. Candidates are ranked by total, and each test
 opens to every answer with its verdict.
 
+Locally every email lands in Mailpit (port 8025) and nothing is really sent.
+To send real emails, set these before starting, for example in a `.env` file
+next to `docker-compose.yml`:
+
+```sh
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_STARTTLS=true
+SMTP_USER=you@gmail.com
+SMTP_PASSWORD=<an app password, not your account password>
+MAIL_FROM=RecruteHub <you@gmail.com>
+```
+
 Emails go through the notifications worker: other services queue a
 `send_email` job, the worker sends it over SMTP, retrying 3 times, and logs it
 (admins read the log at `/api/notifications/emails`).
