@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "recrutehub",
+      "credentials": [{ "accessKey": "recrutehub", "secretKey": "recrutehub-dev" }],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}
