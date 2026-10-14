@@ -55,3 +55,42 @@ export const roleLabel: Record<User["role"], string> = {
   editor: "Editor",
   recruiter: "Recruiter",
 };
+
+export type OfferStatus = "draft" | "active" | "archived";
+
+export type RecipeRow = { language: string; level: number; code_count: number; qcm_count: number };
+
+export type Offer = {
+  id: string;
+  title: string;
+  status: OfferStatus;
+  question_count: number;
+  question_budget: number;
+  description: string;
+  public_token: string;
+  cv_score_threshold: number;
+  weight_theory: number;
+  weight_practice: number;
+  recipe: RecipeRow[];
+};
+
+export type OfferSummary = Pick<Offer, "id" | "title" | "status" | "question_count" | "question_budget">;
+
+export type Recipe = {
+  rows: (RecipeRow & { stock_code: number; stock_qcm: number; available_levels: number[] })[];
+  total: number;
+  budget: number;
+  warnings: { code: string; message: string; row: number | null }[];
+};
+
+export type Stock = { language: string; level: number; code: number; qcm: number };
+
+export const levelLabel: Record<number, string> = {
+  1: "Beginner",
+  2: "Intermediate",
+  3: "Advanced",
+  4: "Expert",
+  5: "Master",
+};
+
+export const statusLabel: Record<OfferStatus, string> = { draft: "Draft", active: "Open", archived: "Archived" };

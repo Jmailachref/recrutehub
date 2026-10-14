@@ -1,6 +1,7 @@
 """One error format for every service: {"error": {"code": ..., "message": ...}}."""
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
@@ -33,6 +34,6 @@ def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError):
         return JSONResponse(
-            error_body("invalid_request", "The request is not valid.", details=exc.errors()),
+            jsonable_encoder(error_body("invalid_request", "The request is not valid.", details=exc.errors())),
             status_code=400,
         )
