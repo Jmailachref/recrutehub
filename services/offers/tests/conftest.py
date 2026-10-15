@@ -12,8 +12,9 @@ from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
-from rh_common import tokens  # noqa: E402
+from rh_common import ApiError, tokens  # noqa: E402
 from rh_common.codeplay import codeplay  # noqa: E402
+from rh_common.cvanalyzer import cvanalyzer  # noqa: E402
 from rh_common.db import Base, engine  # noqa: E402
 
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -48,6 +49,36 @@ class FakeBank:
         return [r for r in self.rows if language in (None, r["language"])]
 
 
+class FakeAnalyzer:
+    """Stands in for the CV analyzer: keeps each offer's grid, one criterion per skill."""
+
+    def __init__(self):
+        self.offers: dict[str, dict] = {}
+        self.down = False
+
+    def save_offer(self, ref, title, skills, criteria=None, rebuild=False):
+        if self.down:
+            raise ApiError(502, "cv_analyzer_unavailable", "down")
+        old = self.offers.get(ref)
+        if criteria is None and (old is None or rebuild):
+            criteria = [{"id": s["language"], "label": s["language"], "terms": [], "default_synonyms": True,
+                         "points_present": 1.0, "points_absent": -20.0 if s["priority"] == 1 else 0.0} for s in skills]
+        elif criteria is None:
+            criteria = old["criteria"]
+        version = (old["grid_version"] + (old["criteria"] != criteria)) if old else 1
+        self.offers[ref] = {"external_ref": ref, "title": title, "skills": skills, "criteria": criteria, "grid_version": version}
+        return self.offers[ref]
+
+    def offer(self, ref):
+        if ref not in self.offers:
+            raise ApiError(404, "offer_not_found", "no such offer")
+        return self.offers[ref]
+
+    def delete_offer(self, ref):
+        if self.offers.pop(ref, None) is None:
+            raise ApiError(404, "offer_not_found", "no such offer")
+
+
 @pytest.fixture(autouse=True)
 def fresh_db():
     Base.metadata.drop_all(engine())
@@ -64,5 +95,13 @@ def bank():
 
 
 @pytest.fixture
-def client(bank):
+def analyzer():
+    fake = FakeAnalyzer()
+    app.dependency_overrides[cvanalyzer] = lambda: fake
+    yield fake
+    app.dependency_overrides.pop(cvanalyzer, None)
+
+
+@pytest.fixture
+def client(bank, analyzer):
     return TestClient(app)

@@ -96,3 +96,39 @@ def test_validator_errors_are_reported_as_400(monkeypatch, tmp_path):
 def test_errors_use_shared_format(app):
     assert app.get("/boom").json() == {"error": {"code": "conflict", "message": "Already exists"}}
     assert app.get("/missing").json()["error"]["code"] == "not_found"
+
+
+def test_cv_analyzer_client_speaks_its_api():
+    import httpx
+
+    from rh_common.cvanalyzer import CvAnalyzer
+
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path, request.headers["authorization"], request.content))
+        if request.url.path == "/v1/offers/missing":
+            return httpx.Response(404, json={"error": {"code": "offer_not_found", "message": "no offer"}})
+        if request.url.path == "/v1/offers/broken":
+            return httpx.Response(500, json={"error": {"code": "internal", "message": "boom"}})
+        return httpx.Response(200, json={"ok": True})
+
+    cva = CvAnalyzer("http://cva", "key", transport=httpx.MockTransport(handler))
+    cva.save_offer("o1", "Dev", [{"language": "python", "priority": 1}])
+    assert seen[-1][:3] == ("PUT", "/v1/offers/o1", "Bearer key")
+    assert b'"skills":[{"name":"python","priority":1}]' in seen[-1][3] and b"criteria" not in seen[-1][3]
+    cva.save_offer("o1", "Dev", [], rebuild=True)
+    assert b'"rebuild":true' in seen[-1][3]
+    with pytest.raises(ApiError) as missing:
+        cva.offer("missing")
+    assert (missing.value.status, missing.value.code) == (404, "offer_not_found")
+    with pytest.raises(ApiError) as broken:
+        cva.offer("broken")
+    assert (broken.value.status, broken.value.code) == (502, "cv_analyzer_error")
+
+    def down(request):
+        raise httpx.ConnectError("refused")
+
+    with pytest.raises(ApiError) as unreachable:
+        CvAnalyzer("http://cva", "key", transport=httpx.MockTransport(down)).ranking("o1")
+    assert unreachable.value.code == "cv_analyzer_unavailable"

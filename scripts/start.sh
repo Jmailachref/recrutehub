@@ -1,6 +1,6 @@
 #!/bin/sh
 # Starts the whole stack. Runs on every Codespace start; later starts are quick.
-#  1. checks out Code Playground next to this repo if it is not there yet
+#  1. checks out Code Playground and CV Analyzer next to this repo if they are not there yet
 #  2. builds Code Playground's sandbox images when any is missing
 #  3. builds and starts every container, then loads the sample coding problems
 set -e
@@ -12,6 +12,13 @@ else
   # Pick up new questions and fixes; a checkout with local changes stays as it is.
   git -C "$CODEPLAY_SOURCE" pull --ff-only --quiet || echo "Could not update $CODEPLAY_SOURCE; using it as it is."
 fi
+CV_ANALYZER_SOURCE="${CV_ANALYZER_SOURCE:-../cv-analyzer}"
+if [ ! -d "$CV_ANALYZER_SOURCE" ]; then
+  git clone https://github.com/Jmailachref/cv-analyzer.git "$CV_ANALYZER_SOURCE"
+else
+  git -C "$CV_ANALYZER_SOURCE" pull --ff-only --quiet || echo "Could not update $CV_ANALYZER_SOURCE; using it as it is."
+fi
+export CV_ANALYZER_SOURCE
 # In a Codespace, links in emails (the candidate's test link) must use the forwarded address.
 if [ -n "$CODESPACE_NAME" ] && [ -z "$PUBLIC_URL" ]; then
   export PUBLIC_URL="https://$CODESPACE_NAME-${GATEWAY_PORT:-80}.$GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN"

@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime
 from typing import Annotated, Literal
@@ -11,31 +12,36 @@ from app.generator import generate
 from app.models import JobOffer, RecipeRow
 from rh_common import ApiError, Principal, create_app, internal, require_role
 from rh_common.codeplay import CodePlayground, codeplay
+from rh_common.cvanalyzer import CvAnalyzer, cvanalyzer
 from rh_common.db import get_session
 
 app = create_app("offers")
 
 Db = Annotated[Session, Depends(get_session)]
 Bank = Annotated[CodePlayground, Depends(codeplay)]
+Analyzer = Annotated[CvAnalyzer, Depends(cvanalyzer)]
 Staff = Annotated[Principal, Depends(require_role("admin", "editor", "recruiter"))]
 Writer = Annotated[Principal, Depends(require_role("admin", "recruiter"))]
 Service = Annotated[Principal, Depends(require_role("service"))]
 Topic = Annotated[str, Field(min_length=1, max_length=30, pattern=r"^[a-z0-9][a-z0-9+#.-]*$")]
+# A skill: a language or topic of the question bank, or any competence the CV should show.
+SkillName = Annotated[str, Field(min_length=1, max_length=40, pattern=r"^[\w+#.][\w+#. /&'-]*$")]
 MAX_PER_ROW = 20
+log = logging.getLogger(__name__)
 
 
 class SkillIn(BaseModel):
-    language: Topic
+    language: SkillName = Field(description="A question bank language or topic (tested), or any other competence")
     priority: int = Field(ge=1, le=5, description="1 core, 2 important, 3 secondary (tested); 4 CV only, 5 bonus")
 
 
 def distinct_languages(skills: list[SkillIn]) -> list[SkillIn]:
-    if len({s.language for s in skills}) != len(skills):
+    if len({s.language.strip().lower() for s in skills}) != len(skills):
         raise ValueError("each skill appears once in an offer")
     return skills
 
 
-Skills = Annotated[list[SkillIn], Field(max_length=30), AfterValidator(distinct_languages)]
+Skills = Annotated[list[SkillIn], Field(max_length=40), AfterValidator(distinct_languages)]
 
 
 class OfferIn(BaseModel):
@@ -103,6 +109,27 @@ class RecipeOut(BaseModel):
     warnings: list[RecipeWarning]
 
 
+class CriterionIn(BaseModel):
+    """One line of the CV grid: words that count as one competence, and its points."""
+
+    id: str = Field(min_length=1, max_length=60)
+    label: str = Field(min_length=1, max_length=80)
+    terms: list[str] = Field(default=[], max_length=40, description="Other words that count as this competence")
+    default_synonyms: bool = Field(default=True, description="Also look for the analyzer's synonyms of the label")
+    points_present: float = Field(default=1.0, ge=0, le=50, description="Points when the CV shows it")
+    points_absent: float = Field(default=0.0, ge=-50, le=0, description="Points lost when it is missing")
+
+
+class GridIn(BaseModel):
+    criteria: list[CriterionIn] | None = Field(default=None, max_length=100, description="The edited grid")
+    rebuild: bool = Field(default=False, description="Without criteria: build the grid from the skills again")
+
+
+class GridOut(BaseModel):
+    version: int
+    criteria: list[CriterionIn]
+
+
 class OfferSummary(BaseModel):
     id: uuid.UUID
     title: str
@@ -166,6 +193,22 @@ def offer_out(offer: JobOffer, model=OfferOut, **extra):
         recipe=rows_of(offer),
         **extra,
     )
+
+
+def sync_grid(offer: JobOffer, analyzer: CvAnalyzer) -> None:
+    """Sends the offer's title and skills to the CV analyzer, which keeps the grid's edits.
+
+    Best effort: a CV analyzer that is down must not stop recruiters from saving offers;
+    the grid catches up the next time it is read.
+    """
+    try:
+        analyzer.save_offer(str(offer.id), offer.title, offer.skills or [])
+    except ApiError as exc:
+        log.warning("could not send offer %s to the CV analyzer: %s", offer.id, exc.message)
+
+
+def grid_out(data: dict) -> GridOut:
+    return GridOut(version=data["grid_version"], criteria=data["criteria"])
 
 
 def own_offer(db: Session, user: Principal, offer_id: uuid.UUID) -> JobOffer:
@@ -237,11 +280,12 @@ def list_offers(
 
 
 @app.post("/offers", response_model=OfferOut, status_code=201, tags=["offers"])
-def create_offer(body: OfferIn, db: Db, user: Writer) -> OfferOut:
+def create_offer(body: OfferIn, db: Db, user: Writer, analyzer: Analyzer) -> OfferOut:
     offer = JobOffer(tenant_id=user.tenant_id, created_by=uuid.UUID(user.sub), **body.model_dump())
     db.add(offer)
     db.commit()
     db.refresh(offer)
+    sync_grid(offer, analyzer)
     return offer_out(offer)
 
 
@@ -251,16 +295,19 @@ def read_offer(offer_id: uuid.UUID, db: Db, user: Staff) -> OfferOut:
 
 
 @app.patch("/offers/{offer_id}", response_model=OfferOut, tags=["offers"])
-def update_offer(offer_id: uuid.UUID, body: OfferUpdate, db: Db, user: Writer) -> OfferOut:
+def update_offer(offer_id: uuid.UUID, body: OfferUpdate, db: Db, user: Writer, analyzer: Analyzer) -> OfferOut:
     offer = own_offer(db, user, offer_id)
-    for field, value in body.model_dump(exclude_unset=True).items():
+    changes = body.model_dump(exclude_unset=True)
+    for field, value in changes.items():
         setattr(offer, field, value)
     db.commit()
+    if "title" in changes or "skills" in changes:
+        sync_grid(offer, analyzer)
     return offer_out(offer)
 
 
 @app.delete("/offers/{offer_id}", status_code=204, tags=["offers"])
-def delete_offer(offer_id: uuid.UUID, db: Db, user: Writer) -> None:
+def delete_offer(offer_id: uuid.UUID, db: Db, user: Writer, analyzer: Analyzer) -> None:
     """Deletes an offer nobody applied to. Offers with applications are archived instead."""
     offer = own_offer(db, user, offer_id)
     count = internal.call("GET", "candidates", f"/internal/offers/{offer_id}/count")["count"]
@@ -268,6 +315,11 @@ def delete_offer(offer_id: uuid.UUID, db: Db, user: Writer) -> None:
         raise ApiError(409, "has_candidates", f"{count} candidate(s) applied to this offer: archive it instead")
     db.delete(offer)
     db.commit()
+    try:
+        analyzer.delete_offer(str(offer_id))
+    except ApiError as exc:
+        if exc.status != 404:
+            log.warning("could not delete offer %s from the CV analyzer: %s", offer_id, exc.message)
 
 
 @app.patch("/offers/{offer_id}/weights", response_model=OfferOut, tags=["offers"])
@@ -309,6 +361,31 @@ def restore_offer(offer_id: uuid.UUID, db: Db, user: Writer) -> OfferOut:
     offer.status = "draft"
     db.commit()
     return offer_out(offer)
+
+
+# --- CV grid ----------------------------------------------------------------
+
+
+@app.get("/offers/{offer_id}/grid", response_model=GridOut, tags=["cv grid"])
+def read_grid(offer_id: uuid.UUID, db: Db, user: Staff, analyzer: Analyzer) -> GridOut:
+    """How CVs are scored for this offer: each competence, the words that show it and its points."""
+    offer = own_offer(db, user, offer_id)
+    try:
+        return grid_out(analyzer.offer(str(offer.id)))
+    except ApiError as exc:
+        if exc.code != "offer_not_found":
+            raise
+    return grid_out(analyzer.save_offer(str(offer.id), offer.title, offer.skills or []))
+
+
+@app.put("/offers/{offer_id}/grid", response_model=GridOut, tags=["cv grid"])
+def replace_grid(offer_id: uuid.UUID, body: GridIn, db: Db, user: Writer, analyzer: Analyzer) -> GridOut:
+    """Saves the edited grid, or with rebuild builds it from the skills again. Every CV is scored again."""
+    offer = own_offer(db, user, offer_id)
+    if body.criteria is None and not body.rebuild:
+        raise ApiError(400, "invalid_request", "Send criteria, or rebuild")
+    criteria = [c.model_dump() for c in body.criteria] if body.criteria is not None else None
+    return grid_out(analyzer.save_offer(str(offer.id), offer.title, offer.skills or [], criteria, rebuild=body.rebuild))
 
 
 # --- recipe -----------------------------------------------------------------

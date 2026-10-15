@@ -1,6 +1,7 @@
 # The whole RecruteHub stack. Open http://localhost (port 80) once it is up.
-# Code Playground is built from its own repository, checked out next to this
-# one (../code-playground) unless CODEPLAY_SOURCE says otherwise.
+# Code Playground and CV Analyzer are built from their own repositories, checked
+# out next to this one (../code-playground, ../cv-analyzer) unless CODEPLAY_SOURCE
+# and CV_ANALYZER_SOURCE say otherwise.
 # Development passwords only: every database user's password is its name.
 
 x-service: &service
@@ -32,6 +33,21 @@ x-codeplay: &codeplay
       condition: service_healthy
     redis:
       condition: service_started
+
+# CV Analyzer reads each CV and scores it against its offer's grid, in points.
+x-cvanalyzer: &cvanalyzer
+  environment:
+    DATABASE_URL: postgresql+psycopg://cvanalyzer:cvanalyzer@postgres:5432/cvanalyzer_db
+    REDIS_URL: redis://redis:6379/2
+    API_KEYS: recrutehub:${CV_ANALYZER_KEY:-recrutehub-cv-dev-key}
+    STORAGE: local
+    STORAGE_DIR: /data/files
+  volumes:
+    - cvfiles:/data/files
+
+x-cvanalyzer-client: &cvanalyzer-client
+  CV_ANALYZER_URL: http://cvanalyzer-api:8000
+  CV_ANALYZER_KEY: ${CV_ANALYZER_KEY:-recrutehub-cv-dev-key}
 
 services:
   gateway:
@@ -66,7 +82,7 @@ services:
     <<: *service
     build: { context: ., dockerfile: services/offers/Dockerfile }
     environment:
-      <<: *env
+      <<: [*env, *cvanalyzer-client]
       DATABASE_URL: postgresql+psycopg://offers:offers@postgres:5432/offers_db
       SERVICE_NAME: offers
       CODEPLAY_URL: http://codeplay-api:8000
@@ -94,7 +110,7 @@ services:
     build: { context: ., dockerfile: services/candidates/Dockerfile }
     image: recrutehub/candidates:local
     environment: &candidates-env
-      <<: *env
+      <<: [*env, *cvanalyzer-client]
       SERVICE_NAME: candidates
       DATABASE_URL: postgresql+psycopg://candidates:candidates@postgres:5432/candidates_db
       S3_URL: http://s3:8333
@@ -176,6 +192,55 @@ services:
       codeplay-migrate:
         condition: service_completed_successfully
 
+  # The CV analyzer's database, also on a Postgres volume created before it existed.
+  cvanalyzer-db:
+    image: postgres:16
+    environment:
+      PGPASSWORD: postgres
+    entrypoint:
+      - sh
+      - -c
+      - |
+        psql -h postgres -U postgres -tc "SELECT 1 FROM pg_roles WHERE rolname = 'cvanalyzer'" | grep -q 1 ||
+          psql -h postgres -U postgres -c "CREATE ROLE cvanalyzer LOGIN PASSWORD 'cvanalyzer'"
+        psql -h postgres -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'cvanalyzer_db'" | grep -q 1 ||
+          psql -h postgres -U postgres -c "CREATE DATABASE cvanalyzer_db OWNER cvanalyzer" \
+            -c "REVOKE CONNECT ON DATABASE cvanalyzer_db FROM PUBLIC"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  cvanalyzer-migrate:
+    <<: *cvanalyzer
+    build: { context: "${CV_ANALYZER_SOURCE:-../cv-analyzer}", target: api }
+    image: recrutehub/cvanalyzer-api:local
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      cvanalyzer-db:
+        condition: service_completed_successfully
+
+  cvanalyzer-api:
+    <<: *cvanalyzer
+    build: { context: "${CV_ANALYZER_SOURCE:-../cv-analyzer}", target: api }
+    image: recrutehub/cvanalyzer-api:local
+    restart: unless-stopped
+    depends_on:
+      cvanalyzer-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+
+  cvanalyzer-worker:
+    <<: *cvanalyzer
+    build: { context: "${CV_ANALYZER_SOURCE:-../cv-analyzer}", target: worker }
+    image: recrutehub/cvanalyzer-worker:local
+    restart: unless-stopped
+    depends_on:
+      cvanalyzer-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+
   postgres:
     image: postgres:16
     environment:
@@ -225,6 +290,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  cvfiles:
   authkeys:
   pgdata:
   s3data:

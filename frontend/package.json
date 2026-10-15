@@ -2,10 +2,10 @@
   "name": "recrutehub-frontend",
   "private": true,
   "scripts": {
-    "copy-monaco": "node scripts/copy-monaco.mjs",
-    "predev": "npm run copy-monaco",
+    "copy-assets": "node scripts/copy-assets.mjs",
+    "predev": "npm run copy-assets",
     "dev": "next dev",
-    "prebuild": "npm run copy-monaco",
+    "prebuild": "npm run copy-assets",
     "build": "next build",
     "start": "next start"
   },
@@ -14,6 +14,7 @@
     "jose": "6.2.12",
     "monaco-editor": "0.52.2",
     "next": "15.5.27",
+    "pdfjs-dist": "4.10.38",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

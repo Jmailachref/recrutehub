@@ -16,6 +16,7 @@ def test_apply_stores_cv_and_queues_the_email(client, fakes):
     offer = fakes.offers["open"]
     assert fakes.files == {f"{ACME}/{offer['id']}/{cid}.pdf": PDF}
     assert fakes.jobs == [
+        ("candidates", "send_cv", {"candidate_id": cid}),
         (
             "notifications",
             "send_email",
@@ -101,3 +102,56 @@ def test_internal_read_and_status(client):
     offer_id = c["offer_id"]
     assert client.get(f"/internal/offers/{offer_id}/count", headers=service).json() == {"count": 1}
     assert client.get(f"/internal/offers/{uuid.uuid4()}/count", headers=service).json() == {"count": 0}
+
+
+def test_each_cv_goes_to_the_cv_analyzer(client, fakes, analyzer):
+    from app.cv import handle_send_cv
+    from rh_common.db import _sessions
+
+    cid = apply(client).json()["id"]
+    assert ("candidates", "send_cv", {"candidate_id": cid}) in fakes.jobs
+    with _sessions()() as db:
+        # The analyzer does not know the offer yet: it is sent first.
+        handle_send_cv({"candidate_id": cid}, db, analyzer)
+        handle_send_cv({"candidate_id": cid}, db, analyzer)
+    offer = fakes.offers["open"]
+    assert analyzer.offers[offer["id"]]["title"] == "Backend developer"
+    assert [d["external_ref"] for d in analyzer.documents.values()] == [cid]
+    listed = client.get(f"/candidates?offer_id={offer['id']}", headers=token()).json()
+    assert (listed[0]["cv_score"], listed[0]["cv_status"]) == (1.5, "ready")
+
+
+def test_cv_points_are_empty_while_the_analyzer_is_down(client, analyzer):
+    apply(client)
+    analyzer.down = True
+    c = client.get("/candidates", headers=token()).json()[0]
+    assert (c["cv_score"], c["cv_status"], c["cv_missing"]) == (None, None, [])
+
+
+def test_recruiters_give_points_to_cv_passages(client, analyzer):
+    cid = apply(client).json()["id"]
+    review = client.get(f"/candidates/{cid}/cv-review", headers=token())
+    assert review.status_code == 200, review.text
+    assert (review.json()["total"], review.json()["criteria"][0]["id"]) == (1.5, "python")
+
+    recruiter = token()
+    flag = {"quote": "Analyste chez Globex", "page": 1, "boxes": [{"page": 1, "x0": 1, "top": 2, "x1": 3, "bottom": 4}],
+            "points": -50, "comment": "We cannot hire from Globex"}
+    r = client.post(f"/candidates/{cid}/cv-highlights", json=flag, headers=recruiter)
+    assert r.status_code == 201, r.text
+    assert client.post(f"/candidates/{cid}/cv-highlights", json=flag, headers=recruiter).json()["error"]["code"] == "already_scored"
+    assert client.post(f"/candidates/{cid}/cv-highlights", json={**flag, "points": 0}, headers=recruiter).status_code == 400
+    assert client.post(f"/candidates/{cid}/cv-highlights", json={**flag, "points": 101}, headers=recruiter).status_code == 400
+    assert client.post(f"/candidates/{cid}/cv-highlights", json={"line": 0, "points": 5}, headers=token("editor")).status_code == 403
+    client.post(f"/candidates/{cid}/cv-highlights", json={"line": 0, "points": 30}, headers=token())
+
+    review = client.get(f"/candidates/{cid}/cv-review", headers=recruiter).json()
+    assert (review["manual"], review["total"]) == (-20, -18.5)
+    mine = next(h for h in review["highlights"] if h["points"] == -50)
+    assert mine["mine"] and mine["author_name"].startswith("User")
+    assert client.get("/candidates", headers=token()).json()[0]["cv_score"] == -18.5
+
+    assert client.delete(f"/candidates/{cid}/cv-highlights/{uuid.uuid4()}", headers=recruiter).status_code == 404
+    assert client.get(f"/candidates/{cid}/cv-review", headers=token(tenant=GLOBEX)).status_code == 404
+    assert client.delete(f"/candidates/{cid}/cv-highlights/{mine['id']}", headers=recruiter).status_code == 204
+    assert client.get(f"/candidates/{cid}/cv-review", headers=recruiter).json()["total"] == 31.5

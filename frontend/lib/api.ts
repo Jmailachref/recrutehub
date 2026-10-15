@@ -140,8 +140,84 @@ export type Candidate = {
   phone: string | null;
   status: CandidateStatus;
   cv_size: number;
+  // The CV's points: keyword points plus the recruiters' points, no bound.
   cv_score: number | null;
+  cv_status: CvStatus | null;
+  // Core skills the CV does not show.
+  cv_missing: string[];
   created_at: string;
+};
+
+export type CvStatus = "queued" | "processing" | "ready" | "unreadable" | "failed";
+
+export const cvStatusLabel: Record<CvStatus, string> = {
+  queued: "CV waiting to be read",
+  processing: "Reading the CV",
+  ready: "CV read",
+  unreadable: "CV unreadable",
+  failed: "CV could not be read",
+};
+
+// One line of an offer's CV grid: the words that show a competence, and its points.
+export type Criterion = {
+  id: string;
+  label: string;
+  terms: string[];
+  default_synonyms: boolean;
+  points_present: number;
+  points_absent: number;
+};
+
+export type Grid = { version: number; criteria: Criterion[] };
+
+// Boxes are in PDF points from the page's top left corner.
+export type Box = { page: number; x0: number; top: number; x1: number; bottom: number };
+
+export type CvLine = { n: number; page: number; section: string; text: string; start: number; end: number; bbox: number[] | null };
+
+export type CriterionResult = { id: string; label: string; found: boolean; points: number; lines: number[]; matched_terms: string[] };
+
+export type CvHighlight = {
+  id: string;
+  author_ref: string;
+  author_name: string;
+  mine: boolean;
+  quote: string;
+  start: number;
+  end: number;
+  boxes: Box[];
+  points: number;
+  comment: string | null;
+  created_at: string;
+};
+
+export type CvReview = {
+  status: CvStatus;
+  error: string | null;
+  pages: number | null;
+  ocr_used: boolean | null;
+  lines: CvLine[];
+  auto: number | null;
+  manual: number;
+  total: number | null;
+  gained: number | null;
+  penalties: number | null;
+  criteria: CriterionResult[];
+  highlights: CvHighlight[];
+};
+
+export type HighlightIn = { points: number; comment?: string | null; quote?: string; page?: number; boxes?: Box[]; line?: number };
+
+// Points have no bound: +3, −50, 0.
+export const formatPoints = (value: number | null | undefined) => {
+  if (value == null) return "—";
+  const n = Math.round(value * 10) / 10;
+  return n > 0 ? `+${n}` : n < 0 ? `−${-n}` : "0";
+};
+
+export const pointsColor = (value: number | null | undefined) => {
+  if (value == null || value === 0) return "text-gray-400";
+  return value > 0 ? "text-green-600 font-semibold" : "text-red-600 font-semibold";
 };
 
 export const candidateStatusLabel: Record<CandidateStatus, string> = {

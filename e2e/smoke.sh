@@ -24,6 +24,13 @@ docker compose exec -T assessments python -c \
   "import httpx; httpx.get('http://codeplay-api:8000/v1/health').raise_for_status()" || fail "assessments cannot reach Code Playground"
 echo "ok  Code Playground reachable from the backends"
 
+tries=0
+until docker compose exec -T candidates python -c \
+  "import httpx; httpx.get('http://cvanalyzer-api:8000/health').raise_for_status()" 2>/dev/null; do
+  tries=$((tries + 1)); [ $tries -lt 60 ] || fail "candidates cannot reach the CV analyzer"; sleep 2
+done
+echo "ok  CV Analyzer reachable from the backends"
+
 code=$(curl -s -o /dev/null -w '%{http_code}' -F name=Smoke -F email=smoke@example.com -F "cv=@/dev/null;type=application/pdf" "$BASE/api/candidates/apply/no-such-offer")
 [ "$code" = 404 ] || fail "applying to an unknown offer should be 404 (got $code)"
 echo "ok  apply checks the offer"

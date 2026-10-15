@@ -1,6 +1,6 @@
 "use client";
 
-// One candidate: profile, CV, scores and every test answer.
+// One candidate: profile, CV (scored in points, annotated by recruiters), test scores and every answer.
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -10,7 +10,9 @@ import {
   ApiError,
   Candidate,
   candidateStatusLabel,
+  formatPoints,
   levelLabel,
+  pointsColor,
   scoreColor,
   TestAnswer,
   TestDetail,
@@ -19,6 +21,7 @@ import {
   topicName,
   verdictLabel,
 } from "@/lib/api";
+import CvReview from "@/components/cv/CvReview";
 import { useUser } from "../../../../AppShell";
 
 const CodeEditor = dynamic(() => import("@/components/CodeEditor"), { ssr: false });
@@ -34,6 +37,8 @@ export default function CandidateProfilePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [inviting, setInviting] = useState(false);
+  // The CV's points, kept up to date as recruiters score passages below.
+  const [cvPoints, setCvPoints] = useState<number | null | undefined>(undefined);
 
   const load = useCallback(async () => {
     try {
@@ -74,9 +79,10 @@ export default function CandidateProfilePage() {
   if (!candidate) return <p className="text-red-600">{error}</p>;
 
   const canInvite = user?.role === "admin" || user?.role === "recruiter";
+  const points = cvPoints === undefined ? candidate.cv_score : cvPoints;
 
   return (
-    <div className="max-w-3xl">
+    <div>
       <div className="mb-5 text-sm text-gray-500 flex flex-wrap gap-2">
         <Link href="/dashboard" className="hover:text-blue-600">
           Dashboard
@@ -111,22 +117,28 @@ export default function CandidateProfilePage() {
 
         <div className="mt-4 grid grid-cols-3 gap-4 border-t border-gray-100 pt-4">
           <div className="text-center">
-            <p className={`text-2xl font-bold tabular-nums ${scoreColor(candidate.cv_score)}`}>{fmt(candidate.cv_score)}</p>
-            <p className="text-xs text-gray-500 mt-0.5">CV Score</p>
+            <p className={`text-2xl font-bold tabular-nums ${pointsColor(points)}`}>{formatPoints(points)}</p>
+            <p className="text-xs text-gray-500 mt-0.5">CV points</p>
           </div>
           <div className="text-center">
             <p className={`text-2xl font-bold tabular-nums ${scoreColor(session?.total_score)}`}>{fmt(session?.total_score)}</p>
             <p className="text-xs text-gray-500 mt-0.5">Final Score</p>
           </div>
-          <div className="text-center self-center">
-            <a href={`/api/candidates/candidates/${candidate.id}/cv`} target="_blank" rel="noopener" className="text-blue-600 hover:underline text-sm font-medium">
-              View CV →
-            </a>
+          <div className="text-center self-center text-sm">
+            {candidate.cv_missing.length > 0 ? (
+              <p className="text-red-700">Missing core skills: {candidate.cv_missing.map(topicName).join(", ")}</p>
+            ) : candidate.cv_status === "ready" ? (
+              <p className="text-green-700">Every core skill found</p>
+            ) : (
+              <p className="text-gray-400">{candidate.cv_status ? "The CV is being read" : "CV not read yet"}</p>
+            )}
           </div>
         </div>
       </div>
 
       {error && <p className="text-red-600 text-sm mb-4">{error}</p>}
+
+      <CvReview candidateId={candidate.id} canScore={canInvite} onPoints={setCvPoints} />
 
       {session ? (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">

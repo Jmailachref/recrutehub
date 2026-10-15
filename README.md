@@ -15,6 +15,7 @@ https://claude.ai/code/artifact/b16a2ca9-0420-494d-8116-6f9f261ca0e7
 | auth, offers, questions, candidates, assessments, notifications | FastAPI backends, one database each | via gateway at `/api/<service>/` |
 | questions-worker, candidates-worker, assessments-worker, notifications-worker | background jobs from Redis queues | none |
 | codeplay-api, codeplay-worker | Code Playground: question bank, test generation, code judging | 8000 (localhost) |
+| cvanalyzer-api, cvanalyzer-worker | [CV Analyzer](https://github.com/Jmailachref/cv-analyzer): reads each CV (OCR for scans) and scores it in points against its offer's grid | none |
 | postgres | one database and user per service | none |
 | redis | job queues | none |
 | s3 | SeaweedFS, S3-compatible storage for CVs (bucket `cvs`) | 8888 file browser |
@@ -32,7 +33,8 @@ sh scripts/start.sh
 ```
 
 The script checks out [Code Playground](https://github.com/Jmailachref/code-playground)
-next to this repo (`../code-playground`) if it is not there, builds its
+and [CV Analyzer](https://github.com/Jmailachref/cv-analyzer) next to this repo
+(`../code-playground`, `../cv-analyzer`) if they are not there, builds its
 sandbox images when any is missing, starts every container and loads the
 sample coding problems. Then open http://localhost.
 
@@ -45,8 +47,8 @@ another company and its admin:
 docker compose exec auth python -m app.bootstrap "Acme" admin@acme.com 'a long password'
 ```
 
-Set `GATEWAY_PORT` to use another port than 80, `CODEPLAY_SOURCE` to
-build Code Playground from another folder, and `PUBLIC_URL` to the address
+Set `GATEWAY_PORT` to use another port than 80, `CODEPLAY_SOURCE` and
+`CV_ANALYZER_SOURCE` to build Code Playground or CV Analyzer from another folder, and `PUBLIC_URL` to the address
 candidates open their test links at (default `http://localhost`).
 
 Check a running stack: `sh e2e/smoke.sh http://localhost`.
@@ -56,8 +58,9 @@ Check a running stack: `sh e2e/smoke.sh http://localhost`.
 The dashboard lists the offers as cards (active and archived tabs) with their
 candidates and scored tests. **New Offer** asks for a title, a description, a
 question budget, the score weights and the skills (the languages and topics
-of the question bank), each with a priority: P1 core, P2 important, P3
-secondary are tested; P4 CV only and P5 bonus are not. **Generate recipe**
+of the question bank, and any other competence typed in, such as Airflow or
+Power BI), each with a priority: P1 core, P2 important, P3 secondary are
+tested when the bank has questions for them; P4 CV only and P5 bonus are not. **Generate recipe**
 shares the budget 3:2:1 between P1, P2 and P3 skills, at the level closest to
 3 that has questions, about 60% QCM and 40% code, within what Code Playground
 has. The recruiter then changes any level or count and validates, which
@@ -66,8 +69,31 @@ closes it. Offers nobody applied to can be deleted. Each candidate's questions
 are drawn by Code Playground when they are invited.
 
 The offer page shows the apply link, the counts (applied, invited, submitted,
-scored), the test recipe and the candidates ranked by final score; each one
-opens to their CV, scores and every answer.
+scored), the test recipe, the CV grid and the candidates ranked by test score,
+then CV points; each one opens to their CV, scores and every answer.
+
+## CV points
+
+Each CV is scored in points against its offer's **CV grid**, built from the
+skills: a competence the CV shows earns P1 +1, P2 +0.5, P3 +0.1, P4 +0.5,
+P5 +0.1, and a missing core skill (P1) costs 20. Each competence counts once,
+however often the CV mentions it. **Edit the grid** on the offer page changes
+the words that count for each competence (other words, synonyms on or off) and
+its points, and adds competences; every CV of the offer is scored again.
+Changing the offer's skills later keeps the lines edited there; **Build from
+the skills again** drops the edits.
+
+On a candidate's page, recruiters select a passage of the CV (or click a line
+of the text read, for a scanned CV) and give it from −100 to +100 points with
+a comment. Negative points mark a red flag (a former employer the company can
+no longer hire from, say) and show in red. A passage counts once: one already
+scored, overlapping, or the same text elsewhere in the CV is refused. A CV's
+points are the grid's points plus every recruiter's points, with no limit.
+
+CV Analyzer does the reading and scoring: the candidates service sends it each
+CV once applied (job `send_cv`, and for older CVs the first time they are
+listed), the offers service sends it each offer's title and skills, and both
+pass the recruiters' requests through, so the browser never calls it.
 
 ## Applications
 
@@ -123,7 +149,8 @@ docker-compose.yml        every container
 gateway/nginx.conf        routes /api/<service>/ to the backends, hides /internal/
 frontend/                 Next.js app
 libs/common/              shared Python package rh_common: app factory, tokens,
-                          errors, database session, Redis queues
+                          errors, database session, Redis queues, Code
+                          Playground and CV Analyzer clients
 services/<name>/          one backend: app/, migrations/ (Alembic), tests/, Dockerfile
 postgres/                 creates the per-service databases on first start
 s3/                       storage credentials (development only)
@@ -152,5 +179,5 @@ cd services/offers && python -m pytest -q
 ```
 
 The passwords and secrets in `docker-compose.yml` and `s3/s3.json` are for
-development only. In production set `SERVICE_SECRET`, `BOOTSTRAP_ADMIN_PASSWORD`
+development only. In production set `SERVICE_SECRET`, `CV_ANALYZER_KEY`, `BOOTSTRAP_ADMIN_PASSWORD`
 (or create admins with the command above) and `COOKIE_SECURE=true`.
