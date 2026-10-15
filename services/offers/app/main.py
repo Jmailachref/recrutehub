@@ -118,6 +118,7 @@ class CriterionIn(BaseModel):
     default_synonyms: bool = Field(default=True, description="Also look for the analyzer's synonyms of the label")
     points_present: float = Field(default=1.0, ge=0, le=50, description="Points when the CV shows it")
     points_absent: float = Field(default=0.0, ge=-50, le=0, description="Points lost when it is missing")
+    level: int | None = Field(default=None, ge=1, le=5, description="1 essential, 2 important, 3 secondary, 4 CV only, 5 bonus")
 
 
 class GridIn(BaseModel):

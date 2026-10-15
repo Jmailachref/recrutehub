@@ -63,7 +63,7 @@ export type RecipeRow = { language: string; level: number; code_count: number; q
 export type Skill = { language: string; priority: number };
 
 export const priorityLabel: Record<number, string> = {
-  1: "Core",
+  1: "Essential",
   2: "Important",
   3: "Secondary",
   4: "CV only",
@@ -166,6 +166,8 @@ export type Criterion = {
   default_synonyms: boolean;
   points_present: number;
   points_absent: number;
+  // 1 essential … 5 bonus; none on lines saved before levels.
+  level?: number | null;
 };
 
 export type Grid = { version: number; criteria: Criterion[] };
