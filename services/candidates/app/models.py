@@ -32,4 +32,6 @@ class Candidate(Base):
     cv_key: Mapped[str] = mapped_column(String(300))
     cv_size: Mapped[int] = mapped_column(Integer)
     cv_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The CV's copy in the CV analyzer, which reads and scores it. Empty until it is sent.
+    cv_document_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

@@ -129,3 +129,16 @@ def test_candidate_token_needs_a_service_token(client):
     claims = jwt.decode(r.json()["token"], options={"verify_signature": False})
     assert claims["role"] == "candidate" and claims["session_id"].endswith("2")
     assert claims["exp"] - claims["iat"] == 7 * 24 * 3600
+
+
+def test_services_read_user_names(client):
+    login(client)
+    rita = client.post("/users", json={"email": "rita@acme.com", "password": "recruiter-pw", "full_name": "Rita Moreau"}).json()
+    me = client.get("/me").json()
+    body = {"ids": [rita["id"], me["id"], "00000000-0000-0000-0000-000000000009"]}
+    assert client.post("/internal/users/names", json=body).status_code == 403
+    service = client.post(
+        "/internal/service-token", headers={"X-Service-Name": "candidates", "X-Service-Secret": "test-secret"}
+    ).json()["token"]
+    r = TestClient(app).post("/internal/users/names", json=body, headers={"Authorization": f"Bearer {service}"})
+    assert r.json() == {rita["id"]: "Rita Moreau", me["id"]: me["full_name"] or me["email"]}

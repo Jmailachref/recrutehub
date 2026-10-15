@@ -33,6 +33,8 @@ export default function OfferEditor({ offerId: initialId }: { offerId?: string }
   const [stock, setStock] = useState<Stock[] | null>(null);
   // language → priority (1-5); absent = not selected
   const [priorities, setPriorities] = useState<Record<string, number>>({});
+  // A competence the question bank does not have (e.g. Airflow, Power BI): only the CV shows it.
+  const [newSkill, setNewSkill] = useState("");
 
   // Recipe
   const [step, setStep] = useState<"form" | "recipe">("form");
@@ -84,11 +86,29 @@ export default function OfferEditor({ offerId: initialId }: { offerId?: string }
 
   const byGroup = useMemo(() => {
     const groups: Record<string, string[]> = {};
-    for (const language of [...new Set((stock ?? []).map((s) => s.language))].sort()) {
+    const bank = new Set((stock ?? []).map((s) => s.language));
+    for (const language of [...bank].sort()) {
       (groups[topicGroup(language)] ??= []).push(language);
     }
+    const others = Object.keys(priorities).filter((language) => !bank.has(language));
+    if (others.length) groups["Other competences"] = others;
     return groups;
-  }, [stock]);
+  }, [stock, priorities]);
+
+  function addSkill() {
+    const name = newSkill.trim().replace(/\s+/g, " ");
+    if (!name) return;
+    if (!/^[\p{L}\p{N}_+#.][\p{L}\p{N}_+#. /&'-]*$/u.test(name) || name.length > 40) {
+      setError("A competence is up to 40 letters, digits, spaces and + # . / & ' -");
+      return;
+    }
+    const same = [...Object.keys(priorities), ...(stock ?? []).map((s) => s.language)].find(
+      (k) => k.toLowerCase() === name.toLowerCase(),
+    );
+    setError("");
+    setPriorities((prev) => ({ ...prev, [same ?? name]: prev[same ?? name] ?? 4 }));
+    setNewSkill("");
+  }
 
   function toggleSkill(language: string) {
     setPriorities((prev) => {
@@ -496,6 +516,35 @@ export default function OfferEditor({ offerId: initialId }: { offerId?: string }
                 </div>
               </div>
             ))}
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Add a competence</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newSkill}
+                  onChange={(e) => setNewSkill(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addSkill();
+                    }
+                  }}
+                  maxLength={40}
+                  placeholder="e.g. Airflow, Power BI, Scrum"
+                  className="flex-1 max-w-xs border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={addSkill}
+                  className="text-sm border border-gray-300 text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition"
+                >
+                  Add
+                </button>
+              </div>
+              <p className="text-xs text-gray-400 mt-1">
+                Any competence the CV should show. Without questions in the bank it is not tested, only looked for in the CV.
+              </p>
+            </div>
             {stock === null && <p className="text-sm text-gray-400">Loading skills…</p>}
             {stock?.length === 0 && (
               <p className="text-sm text-gray-400">The question bank is empty. Add questions to Code Playground first.</p>

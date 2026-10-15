@@ -4,20 +4,24 @@ from typing import Annotated, Literal
 
 from fastapi import Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import storage
+from app.cv import points_by_candidate, send_cv
 from app.models import Candidate
 from rh_common import ApiError, Principal, create_app, internal, queue, require_role
+from rh_common.cvanalyzer import CvAnalyzer, cvanalyzer
 from rh_common.db import get_session
 
 app = create_app("candidates")
 
 Db = Annotated[Session, Depends(get_session)]
 Staff = Annotated[Principal, Depends(require_role("admin", "editor", "recruiter"))]
+Writer = Annotated[Principal, Depends(require_role("admin", "recruiter"))]
+Analyzer = Annotated[CvAnalyzer, Depends(cvanalyzer)]
 MAX_CV_BYTES = 10 * 1024 * 1024
 APPLY_LIMIT_PER_HOUR = 10
 EMAIL = r"^\s*[^@\s]+@[^@\s]+\.[^@\s]+\s*$"
@@ -50,11 +54,14 @@ class CandidateOut(BaseModel):
     phone: str | None
     status: str
     cv_size: int
-    cv_score: int | None
+    cv_score: float | None = Field(description="The CV's points: keyword points plus the recruiters' points, no bound")
+    cv_status: str | None = Field(description="queued, processing, ready, unreadable or failed; empty until the CV is sent")
+    cv_missing: list[str] = Field(description="Core skills the CV does not show")
     created_at: datetime
 
 
-def candidate_out(c: Candidate) -> CandidateOut:
+def candidate_out(c: Candidate, points: dict | None = None) -> CandidateOut:
+    points = points or {}
     return CandidateOut(
         id=c.id,
         offer_id=c.offer_id,
@@ -63,9 +70,47 @@ def candidate_out(c: Candidate) -> CandidateOut:
         phone=c.phone,
         status=c.status,
         cv_size=c.cv_size,
-        cv_score=c.cv_score,
+        cv_score=points.get("total"),
+        cv_status=points.get("status"),
+        cv_missing=points.get("missing") or [],
         created_at=c.created_at,
     )
+
+
+def with_points(candidates: list[Candidate], analyzer: CvAnalyzer) -> list[CandidateOut]:
+    """Adds each CV's points. CVs not sent to the analyzer yet (applied before it was there) are sent now."""
+    for c in candidates:
+        if c.cv_document_id is None:
+            queue.enqueue("candidates", "send_cv", candidate_id=str(c.id))
+    points = points_by_candidate(analyzer, {c.offer_id for c in candidates})
+    return [candidate_out(c, points.get(str(c.id))) for c in candidates]
+
+
+class Box(BaseModel):
+    page: int = Field(ge=1)
+    x0: float
+    top: float
+    x1: float
+    bottom: float
+
+
+class HighlightIn(BaseModel):
+    """Points a recruiter gives a passage of the CV: selected in the PDF (quote, page, boxes) or a line."""
+
+    quote: str | None = Field(default=None, min_length=1, max_length=2000)
+    page: int | None = Field(default=None, ge=1)
+    boxes: list[Box] | None = Field(default=None, max_length=100)
+    line: int | None = Field(default=None, ge=0)
+    points: int = Field(ge=-100, le=100, description="Negative for a red flag; not 0")
+    comment: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def one_target(self) -> "HighlightIn":
+        if self.points == 0:
+            raise ValueError("points cannot be 0")
+        if (self.quote is None) == (self.line is None):
+            raise ValueError("send a quote or a line")
+        return self
 
 
 def own_candidate(db: Session, user: Principal, candidate_id: uuid.UUID) -> Candidate:
@@ -133,6 +178,7 @@ async def apply(
         storage.delete(candidate.cv_key)
         raise ApiError(409, "already_applied", "You already applied to this offer with this email") from None
 
+    queue.enqueue("candidates", "send_cv", candidate_id=str(candidate.id))
     queue.enqueue(
         "notifications",
         "send_email",
@@ -151,6 +197,7 @@ async def apply(
 def list_candidates(
     db: Db,
     user: Staff,
+    analyzer: Analyzer,
     offer_id: uuid.UUID | None = Query(default=None),
     status: Status | None = Query(default=None),
 ) -> list[CandidateOut]:
@@ -160,12 +207,12 @@ def list_candidates(
         query = query.where(Candidate.offer_id == offer_id)
     if status is not None:
         query = query.where(Candidate.status == status)
-    return [candidate_out(c) for c in db.scalars(query)]
+    return with_points(list(db.scalars(query)), analyzer)
 
 
 @app.get("/candidates/{candidate_id}", response_model=CandidateOut, tags=["candidates"])
-def read_candidate(candidate_id: uuid.UUID, db: Db, user: Staff) -> CandidateOut:
-    return candidate_out(own_candidate(db, user, candidate_id))
+def read_candidate(candidate_id: uuid.UUID, db: Db, user: Staff, analyzer: Analyzer) -> CandidateOut:
+    return with_points([own_candidate(db, user, candidate_id)], analyzer)[0]
 
 
 @app.get(
@@ -186,6 +233,68 @@ def download_cv(candidate_id: uuid.UUID, db: Db, user: Staff) -> Response:
             "Cache-Control": "private, no-store",
         },
     )
+
+
+# --- CV review --------------------------------------------------------------
+
+
+def author_names(highlights: list[dict]) -> dict[str, str]:
+    ids = sorted({h["author_ref"] for h in highlights})
+    if not ids:
+        return {}
+    try:
+        return internal.call("POST", "auth", "/internal/users/names", json={"ids": ids})
+    except ApiError:
+        return {}
+
+
+@app.get("/candidates/{candidate_id}/cv-review", tags=["cv review"])
+def cv_review(candidate_id: uuid.UUID, db: Db, user: Staff, analyzer: Analyzer) -> dict:
+    """The CV as the analyzer read it (lines and their boxes on the PDF) and its points.
+
+    total = auto (the offer grid's keyword points, each competence once) + manual (every
+    recruiter's points). No bound.
+    """
+    c = own_candidate(db, user, candidate_id)
+    document_id = str(send_cv(db, c, analyzer))
+    document = analyzer.document(document_id)
+    score = analyzer.score(document_id)
+    analysis = score.get("analysis") or {}
+    details = analysis.get("details") or {}
+    names = author_names(score["highlights"])
+    return {
+        "status": document["status"],
+        "error": document.get("error"),
+        "pages": document.get("pages"),
+        "ocr_used": document.get("ocr_used"),
+        "lines": document.get("lines") or [],
+        "auto": score["auto"],
+        "manual": score["manual"],
+        "total": score["total"],
+        "gained": details.get("gained"),
+        "penalties": details.get("penalties"),
+        "criteria": details.get("criteria") or [],
+        "highlights": [
+            {**h, "author_name": names.get(h["author_ref"], "A teammate"), "mine": h["author_ref"] == user.sub}
+            for h in score["highlights"]
+        ],
+    }
+
+
+@app.post("/candidates/{candidate_id}/cv-highlights", status_code=201, tags=["cv review"])
+def add_highlight(candidate_id: uuid.UUID, body: HighlightIn, db: Db, user: Writer, analyzer: Analyzer) -> dict:
+    """Gives points to a passage of the CV, from -100 to +100. A passage counts once (409 already_scored)."""
+    c = own_candidate(db, user, candidate_id)
+    document_id = str(send_cv(db, c, analyzer))
+    return analyzer.add_highlight(document_id, {**body.model_dump(exclude_none=True), "author_ref": user.sub})
+
+
+@app.delete("/candidates/{candidate_id}/cv-highlights/{highlight_id}", status_code=204, tags=["cv review"])
+def delete_highlight(candidate_id: uuid.UUID, highlight_id: uuid.UUID, db: Db, user: Writer, analyzer: Analyzer) -> None:
+    c = own_candidate(db, user, candidate_id)
+    if c.cv_document_id is None or str(highlight_id) not in {h["id"] for h in analyzer.highlights(str(c.cv_document_id))}:
+        raise ApiError(404, "not_found", "Highlight not found")
+    analyzer.delete_highlight(str(highlight_id))
 
 
 # --- internal ---------------------------------------------------------------

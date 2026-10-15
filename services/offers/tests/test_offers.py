@@ -156,3 +156,40 @@ def test_delete_only_without_candidates(client, monkeypatch):
     applied["count"] = 0
     assert client.delete(f"/offers/{offer['id']}", headers=RECRUITER).status_code == 204
     assert client.get(f"/offers/{offer['id']}", headers=RECRUITER).status_code == 404
+
+
+def test_any_competence_can_be_a_skill(client):
+    skills = [{"language": "python", "priority": 1}, {"language": "Power BI", "priority": 4}, {"language": "C#", "priority": 5}]
+    assert new_offer(client, skills=skills)["skills"] == skills
+    same = [{"language": "Power BI", "priority": 4}, {"language": "power bi", "priority": 5}]
+    assert client.post("/offers", json={"title": "x", "skills": same}, headers=RECRUITER).status_code == 400
+    odd = [{"language": "<script>", "priority": 4}]
+    assert client.post("/offers", json={"title": "x", "skills": odd}, headers=RECRUITER).status_code == 400
+
+
+def test_the_cv_grid_follows_the_offer_and_keeps_edits(client, analyzer):
+    offer = new_offer(client, skills=[{"language": "python", "priority": 1}])
+    grid = client.get(f"/offers/{offer['id']}/grid", headers=RECRUITER).json()
+    assert [c["id"] for c in grid["criteria"]] == ["python"] and grid["version"] == 1
+    edited = grid["criteria"] + [{"id": "airflow", "label": "Airflow", "terms": ["dag"], "points_present": 3}]
+    r = client.put(f"/offers/{offer['id']}/grid", json={"criteria": edited}, headers=RECRUITER)
+    assert r.status_code == 200 and r.json()["version"] == 2
+    assert client.put(f"/offers/{offer['id']}/grid", json={"criteria": edited}, headers=token("editor")).status_code == 403
+    assert client.put(f"/offers/{offer['id']}/grid", json={}, headers=RECRUITER).status_code == 400
+    # Renaming the offer sends it again; the analyzer keeps the edited grid.
+    client.patch(f"/offers/{offer['id']}", json={"title": "Data engineer"}, headers=RECRUITER)
+    assert analyzer.offers[offer["id"]]["title"] == "Data engineer"
+    assert len(client.get(f"/offers/{offer['id']}/grid", headers=RECRUITER).json()["criteria"]) == 2
+    rebuilt = client.put(f"/offers/{offer['id']}/grid", json={"rebuild": True}, headers=RECRUITER).json()
+    assert [c["id"] for c in rebuilt["criteria"]] == ["python"]
+    other = token(tenant=GLOBEX)
+    assert client.get(f"/offers/{offer['id']}/grid", headers=other).status_code == 404
+
+
+def test_offers_save_while_the_cv_analyzer_is_down(client, analyzer):
+    analyzer.down = True
+    offer = new_offer(client, skills=[{"language": "sql", "priority": 2}])
+    assert offer["id"] not in analyzer.offers
+    analyzer.down = False
+    # The grid catches up when it is read.
+    assert client.get(f"/offers/{offer['id']}/grid", headers=RECRUITER).json()["criteria"][0]["id"] == "sql"

@@ -43,12 +43,17 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CODEPLAY_SOURCE: ./.codeplay
+      CV_ANALYZER_SOURCE: ./.cv-analyzer
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
           repository: Jmailachref/code-playground
           path: .codeplay
+      - uses: actions/checkout@v4
+        with:
+          repository: Jmailachref/cv-analyzer
+          path: .cv-analyzer
       - name: Start every container
         run: docker compose up -d --build
       - name: Smoke test through the gateway

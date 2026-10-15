@@ -8,8 +8,11 @@ import {
   ApiError,
   Candidate,
   candidateStatusLabel,
+  formatPoints,
+  Grid,
   levelLabel,
   Offer,
+  pointsColor,
   priorityLabel,
   Recipe,
   scoreColor,
@@ -26,6 +29,8 @@ export default function OfferDetailPage() {
   const canWrite = user?.role !== "editor";
   const [offer, setOffer] = useState<Offer | null>(null);
   const [recipe, setRecipe] = useState<Recipe | null>(null);
+  // undefined while it loads, null when the CV analyzer cannot be reached.
+  const [grid, setGrid] = useState<Grid | null | undefined>(undefined);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [tests, setTests] = useState<Record<string, TestSummary>>({});
   const [loading, setLoading] = useState(true);
@@ -46,6 +51,8 @@ export default function OfferDetailPage() {
       setRecipe(r);
       setCandidates(c);
       setTests(Object.fromEntries(t.map((x) => [x.candidate_id, x])));
+      // The CV grid lives in the CV analyzer; the page works without it.
+      api<Grid>(`/api/offers/offers/${id}/grid`).then(setGrid).catch(() => setGrid(null));
     } catch (e) {
       setError(e instanceof ApiError && e.status === 404 ? "Offer not found" : "Failed to load offer");
     } finally {
@@ -97,8 +104,13 @@ export default function OfferDetailPage() {
     { label: "Submitted", value: all.filter((t) => t.status === "submitted" || t.status === "scored").length },
     { label: "Scored", value: all.filter((t) => t.status === "scored").length },
   ];
-  // Best total first; candidates without a score keep their application order.
-  const ranked = [...candidates].sort((a, b) => (tests[b.id]?.total_score ?? -1) - (tests[a.id]?.total_score ?? -1));
+  // Best test score first, then the most CV points; candidates without either keep their application order.
+  const ranked = [...candidates].sort(
+    (a, b) =>
+      (tests[b.id]?.total_score ?? -1) - (tests[a.id]?.total_score ?? -1) ||
+      (b.cv_score ?? -Infinity) - (a.cv_score ?? -Infinity) ||
+      0,
+  );
   const priorities = Object.fromEntries(offer.skills.map((s) => [s.language, s.priority]));
   const canInvite = user?.role === "admin" || user?.role === "recruiter";
   const badge =
@@ -219,6 +231,39 @@ export default function OfferDetailPage() {
         </div>
       )}
 
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm mb-8">
+        <div className="px-5 py-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-gray-800">CV Grid</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              How CVs earn points: each competence found counts once, a missing core skill costs points.
+            </p>
+          </div>
+          {canWrite && (
+            <Link href={`/offers/${offer.id}/grid`} className="text-sm text-blue-600 hover:underline whitespace-nowrap">
+              Edit the grid →
+            </Link>
+          )}
+        </div>
+        {grid === undefined ? (
+          <p className="text-gray-400 text-sm text-center py-6">Loading…</p>
+        ) : grid === null ? (
+          <p className="text-gray-400 text-sm text-center py-6">The CV grid is not available right now.</p>
+        ) : grid.criteria.length === 0 ? (
+          <p className="text-gray-500 text-sm text-center py-6">No competence in the grid yet.</p>
+        ) : (
+          <ul className="px-5 py-4 flex flex-wrap gap-2">
+            {grid.criteria.map((c) => (
+              <li key={c.id} className="text-xs rounded-full bg-gray-100 text-gray-700 px-2.5 py-1">
+                <span className="font-medium">{topicName(c.label)}</span>{" "}
+                <span className="text-green-700 tabular-nums">{formatPoints(c.points_present)}</span>
+                {c.points_absent < 0 && <span className="text-red-600 tabular-nums"> / {formatPoints(c.points_absent)} if missing</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
           <h2 className="font-semibold text-gray-800">Candidates</h2>
@@ -234,7 +279,7 @@ export default function OfferDetailPage() {
                 <th className="px-5 py-3 text-left">Name</th>
                 <th className="px-5 py-3 text-left">Email</th>
                 <th className="px-5 py-3 text-left">Status</th>
-                <th className="px-5 py-3 text-right">CV Score</th>
+                <th className="px-5 py-3 text-right">CV Points</th>
                 <th className="px-5 py-3 text-right">Final Score</th>
                 <th className="px-5 py-3"></th>
               </tr>
@@ -253,8 +298,11 @@ export default function OfferDetailPage() {
                         {t ? testStatusLabel[t.status] : candidateStatusLabel[c.status]}
                       </span>
                     </td>
-                    <td className={`px-5 py-3 text-right tabular-nums ${scoreColor(c.cv_score)}`}>
-                      {c.cv_score != null ? c.cv_score.toFixed(1) : "—"}
+                    <td className={`px-5 py-3 text-right tabular-nums ${pointsColor(c.cv_score)}`}>
+                      <span title={c.cv_missing.length ? `Missing core skills: ${c.cv_missing.map(topicName).join(", ")}` : undefined}>
+                        {formatPoints(c.cv_score)}
+                      </span>
+                      {c.cv_missing.length > 0 && <span className="block text-xs font-normal text-red-600">misses {c.cv_missing.length} core</span>}
                     </td>
                     <td className={`px-5 py-3 text-right tabular-nums ${scoreColor(t?.total_score)}`}>
                       {scored ? t.total_score!.toFixed(1) : "—"}

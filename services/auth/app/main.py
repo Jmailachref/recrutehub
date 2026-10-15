@@ -267,3 +267,16 @@ def candidate_token(body: CandidateTokenIn, _: Principal = Depends(require_role(
         config.CANDIDATE_TTL_SECONDS,
     )
     return TokenOut(token=token, expires_in=config.CANDIDATE_TTL_SECONDS)
+
+
+class NamesIn(BaseModel):
+    ids: list[uuid.UUID] = Field(max_length=200)
+
+
+@app.post("/internal/users/names", tags=["internal"])
+def user_names(body: NamesIn, db: Db, _: Principal = Depends(require_role("service"))) -> dict[str, str]:
+    """Who wrote what: the names (or emails) of these users, for notes shown to their team."""
+    if not body.ids:
+        return {}
+    users = db.scalars(select(User).where(User.id.in_(body.ids)))
+    return {str(u.id): u.full_name or u.email for u in users}
