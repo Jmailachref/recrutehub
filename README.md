@@ -67,9 +67,11 @@ candidates and scored tests. **New Offer** is one page in three parts:
    about 60% QCM and 40% code, within what Code Playground has. The recruiter
    then changes any level or count. Each candidate's questions are drawn by
    Code Playground when they are invited.
-3. **CV scoring**: a line per selected skill (P1 ones mandatory), filled in as
-   skills are picked; the recruiter changes the points and the words that
-   count, removes lines and adds other competences (see CV points below).
+3. **CV scoring**: a line per selected skill at its level (P1 Essential to
+   P5 Bonus), filled in as skills are picked. The level sets the points if
+   found and if missing; the recruiter changes the level, the points and the
+   words that count, removes lines and adds other competences (see CV points
+   below).
 
 **Publish the offer** opens its apply link (`/apply/<token>`); **Save as
 draft** keeps it closed; archiving closes it. Offers nobody applied to can be

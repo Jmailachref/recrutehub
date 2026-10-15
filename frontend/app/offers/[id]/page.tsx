@@ -236,7 +236,7 @@ export default function OfferDetailPage() {
           <div>
             <h2 className="font-semibold text-gray-800">CV scoring</h2>
             <p className="text-xs text-gray-500 mt-0.5">
-              How CVs earn points: each competence found counts once, a missing core skill costs points.
+              How CVs earn points: each competence found counts once, at its level from Essential to Bonus.
             </p>
           </div>
           {canWrite && (
@@ -256,6 +256,7 @@ export default function OfferDetailPage() {
             {grid.criteria.map((c) => (
               <li key={c.id} className="text-xs rounded-full bg-gray-100 text-gray-700 px-2.5 py-1">
                 <span className="font-medium">{topicName(c.label)}</span>{" "}
+                {c.level && <span className="text-gray-500">P{c.level} {priorityLabel[c.level]} · </span>}
                 <span className="text-green-700 tabular-nums">{formatPoints(c.points_present)}</span>
                 {c.points_absent < 0 && <span className="text-red-600 tabular-nums"> / {formatPoints(c.points_absent)} if missing</span>}
               </li>

@@ -484,11 +484,10 @@ export default function OfferEditor({ offerId: initialId }: { offerId?: string }
       <Section
         n={3}
         title="CV scoring"
-        hint="How each CV earns points. Every skill above gets a line (P1 skills are mandatory); change the points and the words that count, remove lines or add other competences."
+        hint="How each CV earns points. Every skill above gets a line at its level, from Essential to Bonus; change the level, the points and the words that count, remove lines or add other competences."
       >
         <CvGridEditor
           rows={gridRows}
-          priorities={priorities}
           onChange={setGridRows}
           onRemove={(row) => row.skill && setDropped((prev) => new Set(prev).add(row.skill!))}
         />

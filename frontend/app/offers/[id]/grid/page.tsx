@@ -20,8 +20,6 @@ export default function GridPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const priorities = Object.fromEntries((offer?.skills ?? []).map((s) => [s.language, s.priority]));
-
   function show(grid: Grid, o: Offer) {
     const next = rowsFrom(grid.criteria, Object.fromEntries(o.skills.map((s) => [s.language, s.priority])));
     setRows(next);
@@ -74,7 +72,7 @@ export default function GridPage() {
       </Link>
       <h1 className="text-2xl font-bold text-gray-800 mb-5">CV scoring</h1>
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-4">
-        <CvGridEditor rows={rows} priorities={priorities} onChange={setRows} />
+        <CvGridEditor rows={rows} onChange={setRows} />
       </div>
       {error && <p className="text-red-600 text-sm mb-4">{error}</p>}
       {notice && <p className="text-green-700 text-sm mb-4">{notice}</p>}
