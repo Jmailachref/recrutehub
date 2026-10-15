@@ -234,23 +234,23 @@ export default function OfferDetailPage() {
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm mb-8">
         <div className="px-5 py-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="font-semibold text-gray-800">CV Grid</h2>
+            <h2 className="font-semibold text-gray-800">CV scoring</h2>
             <p className="text-xs text-gray-500 mt-0.5">
               How CVs earn points: each competence found counts once, a missing core skill costs points.
             </p>
           </div>
           {canWrite && (
             <Link href={`/offers/${offer.id}/grid`} className="text-sm text-blue-600 hover:underline whitespace-nowrap">
-              Edit the grid →
+              Edit the CV scoring →
             </Link>
           )}
         </div>
         {grid === undefined ? (
           <p className="text-gray-400 text-sm text-center py-6">Loading…</p>
         ) : grid === null ? (
-          <p className="text-gray-400 text-sm text-center py-6">The CV grid is not available right now.</p>
+          <p className="text-gray-400 text-sm text-center py-6">The CV scoring is not available right now.</p>
         ) : grid.criteria.length === 0 ? (
-          <p className="text-gray-500 text-sm text-center py-6">No competence in the grid yet.</p>
+          <p className="text-gray-500 text-sm text-center py-6">No competence in the CV scoring yet.</p>
         ) : (
           <ul className="px-5 py-4 flex flex-wrap gap-2">
             {grid.criteria.map((c) => (
