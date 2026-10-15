@@ -56,9 +56,19 @@ export default function TestPage() {
 
   useEffect(() => {
     const t = takeToken();
-    if (!t) return setProblem("invalid");
+    if (!t) {
+      setProblem("invalid");
+      return;
+    }
     setToken(t);
     load(t);
+    // Opening another test link in this tab only changes the #fragment, which
+    // does not reload the page: start over with the new link's test.
+    const onHash = () => {
+      if (window.location.hash.length > 1) window.location.reload();
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
   }, [load]);
 
   async function start() {
