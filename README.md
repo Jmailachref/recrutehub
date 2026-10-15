@@ -56,30 +56,38 @@ Check a running stack: `sh e2e/smoke.sh http://localhost`.
 ## Offers
 
 The dashboard lists the offers as cards (active and archived tabs) with their
-candidates and scored tests. **New Offer** asks for a title, a description, a
-question budget, the score weights and the skills (the languages and topics
-of the question bank, and any other competence typed in, such as Airflow or
-Power BI), each with a priority: P1 core, P2 important, P3 secondary are
-tested when the bank has questions for them; P4 CV only and P5 bonus are not. **Generate recipe**
-shares the budget 3:2:1 between P1, P2 and P3 skills, at the level closest to
-3 that has questions, about 60% QCM and 40% code, within what Code Playground
-has. The recruiter then changes any level or count and validates, which
-publishes the offer and opens its apply link (`/apply/<token>`); archiving
-closes it. Offers nobody applied to can be deleted. Each candidate's questions
-are drawn by Code Playground when they are invited.
+candidates and scored tests. **New Offer** is one page in three parts:
+
+1. **The job**: the title and description candidates see on the apply page,
+   and the skills (the languages and topics of the question bank), each with a
+   priority: P1 core, P2 important, P3 secondary are tested; P4 CV only and P5
+   bonus are only looked for in the CV.
+2. **The test**: **Build the test from the skills** shares 20 questions 3:2:1
+   between P1, P2 and P3 skills, at the level closest to 3 that has questions,
+   about 60% QCM and 40% code, within what Code Playground has. The recruiter
+   then changes any level or count. Each candidate's questions are drawn by
+   Code Playground when they are invited.
+3. **CV scoring**: a line per selected skill (P1 ones mandatory), filled in as
+   skills are picked; the recruiter changes the points and the words that
+   count, removes lines and adds other competences (see CV points below).
+
+**Publish the offer** opens its apply link (`/apply/<token>`); **Save as
+draft** keeps it closed; archiving closes it. Offers nobody applied to can be
+deleted.
 
 The offer page shows the apply link, the counts (applied, invited, submitted,
-scored), the test recipe, the CV grid and the candidates ranked by test score,
+scored), the test recipe, the CV scoring and the candidates ranked by test score,
 then CV points; each one opens to their CV, scores and every answer.
 
 ## CV points
 
-Each CV is scored in points against its offer's **CV grid**, built from the
+Each CV is scored in points against its offer's **CV scoring**, built from the
 skills: a competence the CV shows earns P1 +1, P2 +0.5, P3 +0.1, P4 +0.5,
 P5 +0.1, and a missing core skill (P1) costs 20. Each competence counts once,
-however often the CV mentions it. **Edit the grid** on the offer page changes
+however often the CV mentions it. **Edit the CV scoring** on the offer page changes
 the words that count for each competence (other words, synonyms on or off) and
-its points, and adds competences; every CV of the offer is scored again.
+its points, and adds competences (the same lines as the offer form's CV
+scoring); every CV of the offer is scored again.
 Changing the offer's skills later keeps the lines edited there; **Build from
 the skills again** drops the edits.
 
