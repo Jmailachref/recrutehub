@@ -82,10 +82,10 @@ def test_question_goes_from_draft_to_review_to_tests(client, people):
     assert client.put(f"/questions/{q['id']}", json={**QCM, "skill_id": skill["id"]}, headers=junior).status_code == 409
 
     lib = next(s for d in client.get("/catalog", headers=junior).json() for s in d["skills"] if s["id"] == skill["id"])
-    assert lib["library"] == [{"level": 2, "approved": 1, "pending": 0}]
+    assert lib["library"] == [{"level": 2, "approved": 1, "pending": 0, "shared": 0}]
 
 
-def test_admin_validates_anyone_but_not_themselves(client, people):
+def test_admin_validates_anyone_themselves_included(client, people):
     admin_id = people.add("Ada", "admin", 1)
     admin = token(admin_id, "admin")
     expert = token(people.add("Eve", experience=4))
@@ -93,8 +93,9 @@ def test_admin_validates_anyone_but_not_themselves(client, people):
     q = client.post("/questions", json={**NUMERIC, "skill_id": skill["id"], "submit": True}, headers=expert).json()
     assert client.post(f"/questions/{q['id']}/review", json={"decision": "approve"}, headers=admin).json()["status"] == "approved"
     mine = client.post("/questions", json={**NUMERIC, "skill_id": skill["id"], "submit": True}, headers=admin).json()
-    assert mine["can_review"] is False
-    assert client.post(f"/questions/{mine['id']}/review", json={"decision": "approve"}, headers=admin).status_code == 403
+    assert mine["can_review"] is True
+    assert mine["id"] in [r["id"] for r in client.get("/reviews", headers=admin).json()]
+    assert client.post(f"/questions/{mine['id']}/review", json={"decision": "approve"}, headers=admin).json()["status"] == "approved"
 
 
 def test_a_correction_replaces_the_approved_question_once_validated(client, people):
@@ -150,3 +151,30 @@ def test_services_read_stock_and_draw_questions(client, people):
     assert client.get(f"/internal/questions/{ids[0]}", headers=service).json()["tolerance"] == 0.5
     batch = client.post("/internal/questions", json={"ids": ids[:2]}, headers=service).json()
     assert {q["id"] for q in batch} == set(ids[:2])
+
+
+def test_companies_read_the_shared_bank_and_copy_a_qcm(client, people):
+    from tests.conftest import CODE_ID, QCM_ID
+
+    admin = token(people.add("Ada", "admin", 4), "admin")
+    june = token(people.add("June"))
+    tech = client.get("/catalog", headers=june).json()[0]
+    python = next(s for s in tech["skills"] if s["key"] == "python")
+    assert python["library"] == [{"level": 3, "approved": 0, "pending": 0, "shared": 4}]
+
+    listed = client.get(f"/skills/{python['id']}/bank", headers=june).json()
+    assert {q["id"] for q in listed} == {QCM_ID, CODE_ID}
+    code = client.get(f"/skills/{python['id']}/bank/{CODE_ID}", headers=june).json()
+    # Recruiters see the visible test cases only; hidden ones are counted.
+    assert code["examples"] == [{"name": "ex", "input": "1 2", "expected_output": "3"}] and code["hidden_tests"] == 1
+    assert client.get(f"/skills/{python['id']}/bank/{QCM_ID}", headers=june).json()["correct_choices"] == [1]
+
+    copied = client.post(f"/skills/{python['id']}/bank/{QCM_ID}/copy", json={"skill_id": python["id"]}, headers=june)
+    assert copied.status_code == 201
+    assert (copied.json()["status"], copied.json()["correct_choices"], copied.json()["author"]["name"]) == ("draft", [1], "June")
+    assert client.post(f"/skills/{python['id']}/bank/{CODE_ID}/copy", json={"skill_id": python["id"]}, headers=june).status_code == 409
+
+    # A company skill has no shared questions.
+    _, own = finance(client, admin)
+    assert client.get(f"/skills/{own['id']}/bank", headers=june).status_code == 404
+    assert client.get(f"/skills/{python['id']}/bank/{uuid.uuid4()}", headers=june).status_code == 404

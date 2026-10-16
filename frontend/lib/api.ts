@@ -144,7 +144,7 @@ export type LibrarySkill = {
   name: string;
   builtin: boolean;
   own: boolean;
-  library: { level: number; approved: number; pending: number }[];
+  library: { level: number; approved: number; pending: number; shared: number }[];
 };
 
 export type Domain = { id: string; name: string; description: string; builtin: boolean; skills: LibrarySkill[] };
@@ -182,6 +182,19 @@ export type LibraryQuestion = LibraryQuestionSummary & {
   used_count: number;
   can_edit: boolean;
   can_review: boolean;
+};
+
+// Code Playground's questions, shared by every company on the built-in skills (read-only).
+export type BankQuestion = { id: string; title: string; kind: "code" | "qcm"; level: number };
+
+export type BankQuestionDetail = BankQuestion & {
+  statement: string;
+  choices: string[] | null;
+  correct_choices: number[] | null;
+  starter_code: string | null;
+  examples: { name: string; input: string; expected_output: string }[];
+  hidden_tests: number;
+  timer_seconds: number;
 };
 
 export type LibraryMe = { id: string; role: User["role"]; experience: number; experience_label: string; can_curate: boolean };

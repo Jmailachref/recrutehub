@@ -7,6 +7,8 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   api,
   ApiError,
+  BankQuestion,
+  BankQuestionDetail,
   Domain,
   experienceLabel,
   levelLabel,
@@ -117,6 +119,8 @@ export default function LibraryPage() {
   const [reviews, setReviews] = useState<LibraryQuestionSummary[]>([]);
   const [mine, setMine] = useState<LibraryQuestionSummary[]>([]);
   const [open, setOpen] = useState<LibraryQuestion | null>(null);
+  const [bankList, setBankList] = useState<BankQuestion[]>([]);
+  const [openBank, setOpenBank] = useState<BankQuestionDetail | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -133,12 +137,15 @@ export default function LibraryPage() {
     setReviews(r);
     setMine(m);
   }, []);
+  const builtin = skill?.builtin ?? false;
   const loadSkill = useCallback(async () => {
     if (!skillId) return setQuestions([]);
     const params = new URLSearchParams({ skill_id: skillId });
     if (level) params.set("level", String(level));
     setQuestions(await api<LibraryQuestionSummary[]>(`/api/questions/questions?${params}`));
-  }, [skillId, level]);
+    // Built-in skills also show the shared bank's questions, which every company's tests draw.
+    setBankList(builtin ? await api<BankQuestion[]>(`/api/questions/skills/${skillId}/bank${level ? `?level=${level}` : ""}`).catch(() => []) : []);
+  }, [skillId, level, builtin]);
 
   useEffect(() => {
     Promise.all([api<LibraryMe>("/api/questions/me").then(setMe), loadCatalog(), loadLists()]).catch((e) =>
@@ -167,8 +174,33 @@ export default function LibraryPage() {
     }
   }
 
+  async function openShared(id: string) {
+    setEditing(null);
+    setOpen(null);
+    const q = await run(() => api<BankQuestionDetail>(`/api/questions/skills/${skillId}/bank/${id}`), "Could not open the question");
+    if (q) setOpenBank(q);
+  }
+
+  async function copyShared() {
+    if (!openBank) return;
+    const q = await run(
+      () =>
+        api<LibraryQuestion>(`/api/questions/skills/${skillId}/bank/${openBank.id}/copy`, {
+          method: "POST",
+          body: JSON.stringify({ skill_id: skillId }),
+        }),
+      "Could not copy the question",
+    );
+    if (q) {
+      setOpenBank(null);
+      setEditing({ mode: "edit", id: q.id, draft: draftOf(q) });
+      await refresh();
+    }
+  }
+
   async function openQuestion(id: string) {
     setEditing(null);
+    setOpenBank(null);
     const q = await run(() => api<LibraryQuestion>(`/api/questions/questions/${id}`), "Could not open the question");
     if (q) setOpen(q);
   }
@@ -238,7 +270,7 @@ export default function LibraryPage() {
           <>
             {" "}
             {me.role === "admin" ? (
-              "As an admin you validate anyone's questions but your own."
+              "As an admin you validate any question, your own included."
             ) : (
               <>
                 You are <strong className="text-gray-700">{me.experience_label}</strong>
@@ -284,6 +316,7 @@ export default function LibraryPage() {
                 setSkillId(id);
                 setLevel(0);
                 setOpen(null);
+                setOpenBank(null);
                 setEditing(null);
               }}
               onChanged={loadCatalog}
@@ -306,17 +339,22 @@ export default function LibraryPage() {
         </div>
 
         <div className="min-w-0 space-y-6">
-          {tab === "skills" && skill && !open && !editing && (
+          {tab === "skills" && skill && !open && !openBank && !editing && (
             <SkillPanel
               skill={skill}
               level={level}
               setLevel={setLevel}
               questions={questions}
+              shared={bankList}
               onOpen={openQuestion}
+              onOpenShared={openShared}
               onNew={() => setEditing({ mode: "new", draft: emptyDraft(skill.id, level || 2) })}
             />
           )}
-          {tab === "skills" && !skill && !open && !editing && (
+          {openBank && !editing && (
+            <SharedView q={openBank} skill={skill?.name ?? ""} busy={busy} onClose={() => setOpenBank(null)} onCopy={copyShared} />
+          )}
+          {tab === "skills" && !skill && !open && !openBank && !editing && (
             <p className="text-sm text-gray-400 bg-white rounded-xl border border-dashed border-gray-300 p-8 text-center">
               Pick a skill to see its questions, or create a domain and its skills.
             </p>
@@ -430,7 +468,9 @@ function Catalog({
                     className={`flex-1 text-left rounded-lg px-3 py-2 text-sm flex items-center gap-2 ${s.id === skillId ? "bg-blue-50 text-blue-800" : "hover:bg-gray-50 text-gray-700"}`}
                   >
                     <span className="flex-1">{s.name}</span>
-                    {s.builtin && <span className="text-xs text-gray-400">code & QCM bank</span>}
+                    {s.builtin && (
+                      <span className="text-xs text-blue-700 tabular-nums">{s.library.reduce((n, l) => n + l.shared, 0)} shared</span>
+                    )}
                     <span className="text-xs text-gray-500 tabular-nums">{approved} yours</span>
                     {pending > 0 && <span className="text-xs text-amber-700 tabular-nums">{pending} to validate</span>}
                   </button>
@@ -484,14 +524,18 @@ function SkillPanel({
   level,
   setLevel,
   questions,
+  shared,
   onOpen,
+  onOpenShared,
   onNew,
 }: {
   skill: LibrarySkill;
   level: number;
   setLevel: (n: number) => void;
   questions: LibraryQuestionSummary[];
+  shared: BankQuestion[];
   onOpen: (id: string) => void;
+  onOpenShared: (id: string) => void;
   onNew: () => void;
 }) {
   const count = (lv: number) => skill.library.find((l) => l.level === lv);
@@ -522,12 +566,117 @@ function SkillPanel({
               onClick={() => setLevel(lv)}
               className={`text-xs px-2.5 py-1 rounded-full border ${level === lv ? "bg-gray-800 text-white border-gray-800" : "border-gray-300 text-gray-600"}`}
             >
-              {lv} · {levelLabel[lv]} <span className="tabular-nums opacity-70">({c?.approved ?? 0})</span>
+              {lv} · {levelLabel[lv]} <span className="tabular-nums opacity-70">({(c?.approved ?? 0) + (c?.shared ?? 0)})</span>
             </button>
           );
         })}
       </div>
+      {skill.builtin && <p className="px-4 pt-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Your company&apos;s questions</p>}
       <QuestionRows questions={questions} onOpen={onOpen} />
+      {skill.builtin && (
+        <>
+          <p className="px-4 pt-3 text-xs font-semibold text-gray-500 uppercase tracking-wide border-t border-gray-100">
+            Shared bank · {shared.length}
+          </p>
+          {shared.length === 0 ? (
+            <p className="text-sm text-gray-400 py-6 text-center">No shared questions at this level.</p>
+          ) : (
+            <ul className="divide-y divide-gray-100">
+              {shared.map((q) => (
+                <li key={q.id}>
+                  <button onClick={() => onOpenShared(q.id)} className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-3">
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-sm font-medium text-gray-900 truncate">{q.title}</span>
+                      <span className="block text-xs text-gray-500 mt-0.5">
+                        Level {q.level} · {q.kind === "code" ? "Code" : "QCM"}
+                      </span>
+                    </span>
+                    <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-blue-50 text-blue-700 whitespace-nowrap">Shared</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function SharedView({
+  q,
+  skill,
+  busy,
+  onClose,
+  onCopy,
+}: {
+  q: BankQuestionDetail;
+  skill: string;
+  busy: boolean;
+  onClose: () => void;
+  onCopy: () => void;
+}) {
+  return (
+    <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <p className="text-xs text-gray-500">
+            {skill} · Level {q.level} · {levelLabel[q.level]} · {q.kind === "code" ? "Code" : "Multiple choice"} ·{" "}
+            {Math.round(q.timer_seconds / 60) || 1} min
+          </p>
+          <h2 className="font-semibold text-gray-900 mt-1">{q.title}</h2>
+        </div>
+        <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-blue-50 text-blue-700">Shared</span>
+        <button onClick={onClose} className="text-sm text-gray-500 hover:text-gray-800" aria-label="Close">
+          ✕
+        </button>
+      </div>
+      <p className="text-xs text-blue-700 bg-blue-50 rounded px-3 py-2">
+        From the shared bank every company&apos;s tests draw from. It is read-only here
+        {q.kind === "qcm" ? ": copy it into your library to adapt it." : "."}
+      </p>
+      <div className="text-sm text-gray-800 whitespace-pre-wrap">{q.statement}</div>
+      {q.kind === "qcm" ? (
+        <ul className="space-y-1.5">
+          {q.choices?.map((c, i) => (
+            <li
+              key={i}
+              className={`text-sm rounded px-3 py-1.5 border whitespace-pre-wrap ${q.correct_choices?.includes(i) ? "border-green-300 bg-green-50" : "border-gray-100"}`}
+            >
+              {c}
+              {q.correct_choices?.includes(i) && <span className="text-xs text-green-700 ml-2">right</span>}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="space-y-3">
+          {q.starter_code && <pre className="text-xs bg-gray-50 rounded p-3 overflow-x-auto">{q.starter_code}</pre>}
+          {q.examples.map((x, i) => (
+            <div key={i} className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <p className="text-gray-500">{x.name} · input</p>
+                <pre className="bg-gray-50 rounded p-2 overflow-x-auto">{x.input || "(empty)"}</pre>
+              </div>
+              <div>
+                <p className="text-gray-500">expected output</p>
+                <pre className="bg-gray-50 rounded p-2 overflow-x-auto">{x.expected_output || "(empty)"}</pre>
+              </div>
+            </div>
+          ))}
+          {q.hidden_tests > 0 && (
+            <p className="text-xs text-gray-500">
+              {q.hidden_tests} hidden test{q.hidden_tests > 1 ? "s" : ""} also check the code.
+            </p>
+          )}
+        </div>
+      )}
+      {q.kind === "qcm" && (
+        <div className="border-t border-gray-100 pt-4">
+          <button onClick={onCopy} disabled={busy} className="text-sm text-blue-600 hover:underline disabled:opacity-50">
+            Copy to my library as a draft
+          </button>
+        </div>
+      )}
     </section>
   );
 }

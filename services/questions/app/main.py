@@ -83,6 +83,7 @@ class LevelCount(BaseModel):
     level: int
     approved: int
     pending: int
+    shared: int = Field(default=0, description="Built-in skills: Code Playground's approved code and QCM questions")
 
 
 class SkillOut(BaseModel):
@@ -239,13 +240,18 @@ def visible(model, tenant_id: uuid.UUID):
     return or_(model.tenant_id.is_(None), model.tenant_id == tenant_id)
 
 
-def ensure_bank_skills(db: Session, bank: CodePlayground) -> None:
-    """Adds Code Playground's new languages or topics to the built-in domain. Best effort."""
+def bank_stock(bank: CodePlayground) -> list[dict]:
+    """Code Playground's approved questions per topic and level. Best effort: empty when it is down."""
     try:
-        topics = {s["language"] for s in bank.stock()}
+        return bank.stock()
     except ApiError as exc:
-        log.warning("could not read Code Playground's topics: %s", exc.message)
-        return
+        log.warning("could not read Code Playground's stock: %s", exc.message)
+        return []
+
+
+def ensure_bank_skills(db: Session, stock: list[dict]) -> None:
+    """Adds Code Playground's new languages or topics to the built-in domain."""
+    topics = {s["language"] for s in stock}
     known = set(db.scalars(select(Skill.key).where(Skill.tenant_id.is_(None))))
     missing = sorted(topics - known)
     if missing and db.get(Domain, TECH_DOMAIN) is not None:
@@ -293,11 +299,13 @@ def name_taken(db: Session, model, tenant_id: uuid.UUID, name: str, but: uuid.UU
 
 
 def may_review(reviewer: dict | None, author: dict | None, reviewer_id: str, author_id: uuid.UUID) -> bool:
-    """Someone else, more experienced than the author, or an admin."""
-    if reviewer is None or reviewer_id == str(author_id):
+    """An admin, their own questions included, or someone else more experienced than the author."""
+    if reviewer is None:
         return False
     if reviewer["role"] == "admin":
         return True
+    if reviewer_id == str(author_id):
+        return False
     return author is not None and reviewer["experience"] > author["experience"]
 
 
@@ -385,7 +393,9 @@ def me(user: Staff, people: People) -> MeOut:
 @app.get("/catalog", response_model=list[DomainOut], tags=["catalog"])
 def catalog(db: Db, user: Staff, bank: Bank) -> list[DomainOut]:
     """Every domain this company sees, built-in ones first, with their skills and library counts."""
-    ensure_bank_skills(db, bank)
+    stock = bank_stock(bank)
+    ensure_bank_skills(db, stock)
+    shared = {(s["language"], s["level"]): s["code"] + s["qcm"] for s in stock}
     counts: dict[tuple[uuid.UUID, int], dict[str, int]] = {}
     rows = db.execute(
         select(Question.skill_id, Question.level, Question.status, func.count())
@@ -412,7 +422,15 @@ def catalog(db: Db, user: Staff, bank: Bank) -> list[DomainOut]:
                         name=s.name,
                         builtin=s.tenant_id is None,
                         own=s.tenant_id is not None,
-                        library=[LevelCount(level=lv, **counts[(s.id, lv)]) for lv in range(1, 6) if (s.id, lv) in counts],
+                        library=[
+                            LevelCount(
+                                level=lv,
+                                **counts.get((s.id, lv), {"approved": 0, "pending": 0}),
+                                shared=shared.get((s.key, lv), 0) if s.tenant_id is None else 0,
+                            )
+                            for lv in range(1, 6)
+                            if (s.id, lv) in counts or (s.tenant_id is None and (s.key, lv) in shared)
+                        ],
                     )
                     for s in skills
                 ],
@@ -591,14 +609,14 @@ def correct_question(question_id: uuid.UUID, body: QuestionIn, db: Db, user: Sta
 
 @app.post("/questions/{question_id}/review", response_model=QuestionOut, tags=["questions"])
 def review_question(question_id: uuid.UUID, body: ReviewIn, db: Db, user: Staff, people: People) -> QuestionOut:
-    """Approves or rejects a pending question. The reviewer is more experienced than its author, or an admin."""
+    """Approves or rejects a pending question. The reviewer is an admin, or more experienced than its author."""
     q = own_question(db, user, question_id)
     if q.status != "pending":
         raise ApiError(409, "not_pending", "This question is not waiting for review")
     me = uuid.UUID(user.sub)
     profiles = people.profiles([me, q.author_id])
     if not may_review(profiles.get(me), profiles.get(q.author_id), user.sub, q.author_id):
-        raise ApiError(403, "forbidden", "A question is validated by someone more experienced than its author, or an admin")
+        raise ApiError(403, "forbidden", "A question is validated by an admin, or by someone more experienced than its author")
     if body.decision == "reject" and not body.comment.strip():
         raise ApiError(400, "invalid_request", "Say what to fix when rejecting a question")
     q.status = "approved" if body.decision == "approve" else "rejected"
@@ -640,7 +658,7 @@ def review_queue(db: Db, user: Staff, people: People) -> list[QuestionSummary]:
     pending = list(
         db.scalars(
             select(Question)
-            .where(Question.tenant_id == user.tenant_id, Question.status == "pending", Question.author_id != me)
+            .where(Question.tenant_id == user.tenant_id, Question.status == "pending")
             .order_by(Question.updated_at, Question.created_at)
         )
     )
@@ -650,6 +668,102 @@ def review_queue(db: Db, user: Staff, people: People) -> list[QuestionSummary]:
         for q in pending
         if may_review(profiles.get(me), profiles.get(q.author_id), user.sub, q.author_id)
     ]
+
+
+# --- the shared bank ------------------------------------------------------
+# Code Playground's questions, which every company's tests draw for the built-in skills.
+# Companies read them here and can copy a QCM into their own library to adapt it.
+
+
+class BankQuestion(BaseModel):
+    id: str
+    title: str
+    kind: str
+    level: int
+
+
+class BankQuestionOut(BankQuestion):
+    statement: str
+    choices: list[str] | None
+    correct_choices: list[int] | None
+    starter_code: str | None
+    examples: list[dict] = Field(description="Code: the test cases candidates see")
+    hidden_tests: int
+    timer_seconds: int
+
+
+class CopyIn(BaseModel):
+    skill_id: uuid.UUID
+
+
+def bank_skill(db: Session, user: Principal, skill_id: uuid.UUID) -> Skill:
+    s = own_skill(db, user, skill_id)
+    if s.tenant_id is not None:
+        raise ApiError(404, "not_found", "Only built-in skills have shared questions")
+    return s
+
+
+def bank_question(bank: CodePlayground, s: Skill, question_id: str) -> dict:
+    q = bank.problem_full(question_id)
+    if q.get("language") != s.key or q.get("status") != "approved":
+        raise ApiError(404, "not_found", "Question not found")
+    return q
+
+
+@app.get("/skills/{skill_id}/bank", response_model=list[BankQuestion], tags=["shared bank"])
+def list_bank(
+    skill_id: uuid.UUID, db: Db, user: Staff, bank: Bank, level: int | None = Query(default=None, ge=1, le=5)
+) -> list[BankQuestion]:
+    """The shared questions of a built-in skill, easiest first."""
+    s = bank_skill(db, user, skill_id)
+    return [BankQuestion(id=q["id"], title=q["title"], kind=q["kind"], level=q["level"]) for q in bank.problems(s.key, level)]
+
+
+@app.get("/skills/{skill_id}/bank/{question_id}", response_model=BankQuestionOut, tags=["shared bank"])
+def read_bank(skill_id: uuid.UUID, question_id: uuid.UUID, db: Db, user: Staff, bank: Bank) -> BankQuestionOut:
+    """One shared question with its right answers; code questions show only their visible test cases."""
+    q = bank_question(bank, bank_skill(db, user, skill_id), str(question_id))
+    shown = [x for x in q.get("scenarios", []) if not x.get("hidden")]
+    return BankQuestionOut(
+        id=q["id"],
+        title=q["title"],
+        kind=q["kind"],
+        level=q["level"],
+        statement=q["statement"],
+        choices=q.get("choices"),
+        correct_choices=q.get("correct_choices"),
+        starter_code=q.get("starter_code") if q["kind"] == "code" else None,
+        examples=[{"name": x["name"], "input": x["input"], "expected_output": x["expected_output"]} for x in shown],
+        hidden_tests=len(q.get("scenarios", [])) - len(shown),
+        timer_seconds=q["timer_seconds"],
+    )
+
+
+@app.post("/skills/{skill_id}/bank/{question_id}/copy", response_model=QuestionOut, status_code=201, tags=["shared bank"])
+def copy_bank(question_id: uuid.UUID, skill_id: uuid.UUID, body: CopyIn, db: Db, user: Staff, people: People, bank: Bank) -> QuestionOut:
+    """Copies a shared QCM into the company's library as the caller's draft, to adapt and send for validation."""
+    q = bank_question(bank, bank_skill(db, user, skill_id), str(question_id))
+    if q["kind"] != "qcm":
+        raise ApiError(409, "not_copyable", "Only QCM questions can be copied: code questions stay in the shared bank")
+    own_skill(db, user, body.skill_id)
+    draft = Question(
+        tenant_id=user.tenant_id,
+        author_id=uuid.UUID(user.sub),
+        status="draft",
+        skill_id=body.skill_id,
+        level=q["level"],
+        kind="qcm",
+        title=q["title"][:200],
+        statement=q["statement"],
+        choices=q["choices"],
+        correct_choices=q["correct_choices"],
+        timer_seconds=max(15, q["timer_seconds"]),
+        explanation="",
+    )
+    db.add(draft)
+    db.commit()
+    db.refresh(draft)
+    return question_out(draft, user, people)
 
 
 # --- internal ---------------------------------------------------------------

@@ -35,6 +35,13 @@ class CodePlayground:
         """[{language, level, code, qcm}] counts of approved questions."""
         return self._call("GET", "/v1/stock", params={"language": language} if language else None)
 
+    def problems(self, language: str, level: int | None = None) -> list[dict]:
+        """Approved questions of one language or topic: [{id, slug, title, kind, language, level, status}]."""
+        params: dict = {"language": language, "status": "approved"}
+        if level is not None:
+            params["level"] = level
+        return self._call("GET", "/v1/problems", params=params)
+
     def create_test(self, recipe: list[dict], scope: str, external_ref: str) -> dict:
         """Draws and freezes one candidate's questions. 409 not_enough_questions when the bank is short."""
         return self._call("POST", "/v1/tests", json={"recipe": recipe, "scope": scope, "external_ref": external_ref})

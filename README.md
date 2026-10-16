@@ -94,7 +94,8 @@ multiple choice, or a number answer accepted within a tolerance (a net present
 value, a ratio, the result of an Excel formula). Anyone writes a question or
 proposes a correction to a validated one. A question goes into tests once a
 colleague more experienced than its author (Junior < Intermediate < Senior <
-Expert, set on the Team page), or an admin, validates it; a correction replaces
+Expert, set on the Team page), or an admin, validates it (an admin may validate
+their own); a correction replaces
 the validated version only then, and tests already sent keep the version their
 candidate saw.
 
