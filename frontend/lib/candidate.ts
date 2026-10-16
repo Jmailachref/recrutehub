@@ -3,7 +3,7 @@
 export type Question = {
   id: string;
   position: number;
-  kind: "code" | "qcm";
+  kind: "code" | "qcm" | "numeric";
   language: string;
   level: number;
   title: string;
@@ -16,6 +16,9 @@ export type Question = {
   hidden_tests: number;
   answer_choices: number[] | null;
   answer_source: string | null;
+  answer_value: number | null;
+  unit: string | null;
+  skill: string | null;
 };
 
 export type MyTest = {
@@ -26,6 +29,7 @@ export type MyTest = {
   question_count: number;
   code_count: number;
   qcm_count: number;
+  numeric_count: number;
   deadline: string | null;
   seconds_left: number | null;
   questions: Question[];

@@ -69,6 +69,7 @@ class AnswerDetail(BaseModel):
     tolerance: float | None = None
     unit: str | None = None
     explanation: str = ""
+    skill: str | None = Field(default=None, description="The skill's name, for the company's own questions")
     verdict: str | None
     score: float | None = Field(description="0 to 1 once judged")
 
@@ -96,6 +97,7 @@ class Question(BaseModel):
     choices: list[str] | None
     multiple: bool
     unit: str | None = Field(default=None, description="Numeric: the unit of the answer")
+    skill: str | None = Field(default=None, description="The skill's name, for the company's own questions")
     examples: list[dict]
     hidden_tests: int
     answer_choices: list[int] | None
@@ -285,6 +287,7 @@ def read_session(session_id: uuid.UUID, db: Db, user: Staff, bank: Bank, lib: Li
                 tolerance=full.get("tolerance"),
                 unit=full.get("unit"),
                 explanation=full.get("explanation") or "",
+                skill=full.get("skill"),
                 verdict=a.verdict,
                 score=a.score,
             )
@@ -341,6 +344,7 @@ def my_test(s: TestSession, bank: CodePlayground, lib: Library) -> MyTest:
                     choices=q.get("choices"),
                     multiple=q.get("multiple", False),
                     unit=q.get("unit"),
+                    skill=q.get("skill"),
                     examples=[
                         {"name": x["name"], "input": x["input"], "expected_output": x["expected_output"]}
                         for x in q.get("scenarios", [])

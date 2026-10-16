@@ -19,6 +19,7 @@ import {
   statusLabel,
   TestSummary,
   testStatusLabel,
+  rememberSkillNames,
   topicName,
 } from "@/lib/api";
 import { useUser } from "../../AppShell";
@@ -47,6 +48,7 @@ export default function OfferDetailPage() {
         api<Candidate[]>(`/api/candidates/candidates?offer_id=${id}`),
         api<TestSummary[]>(`/api/assessments/sessions?offer_id=${id}`),
       ]);
+      rememberSkillNames(o.skills.map((x) => ({ key: x.language, name: x.label })));
       setOffer(o);
       setRecipe(r);
       setCandidates(c);
@@ -200,6 +202,7 @@ export default function OfferDetailPage() {
                   <th className="px-5 py-3 text-center">Level</th>
                   <th className="px-5 py-3 text-center">QCM</th>
                   <th className="px-5 py-3 text-center">Code</th>
+                  <th className="px-5 py-3 text-center" title="Questions from your company's library">Yours</th>
                   <th className="px-5 py-3 text-center">Total</th>
                 </tr>
               </thead>
@@ -215,7 +218,10 @@ export default function OfferDetailPage() {
                     </td>
                     <td className="px-5 py-3 text-center text-gray-600 tabular-nums">{row.qcm_count}</td>
                     <td className="px-5 py-3 text-center text-gray-600 tabular-nums">{row.code_count}</td>
-                    <td className="px-5 py-3 text-center font-semibold text-gray-800 tabular-nums">{row.qcm_count + row.code_count}</td>
+                    <td className="px-5 py-3 text-center text-gray-600 tabular-nums">{row.library_count}</td>
+                    <td className="px-5 py-3 text-center font-semibold text-gray-800 tabular-nums">
+                      {row.qcm_count + row.code_count + row.library_count}
+                    </td>
                   </tr>
                 ))}
               </tbody>
