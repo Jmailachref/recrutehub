@@ -237,15 +237,19 @@ export default function LibraryPage() {
         {me && (
           <>
             {" "}
-            You are <strong className="text-gray-700">{me.experience_label}</strong>
-            {me.role === "admin"
-              ? ": as an admin you validate anyone's questions but your own."
-              : me.experience > 1
-                ? `: you validate questions written by ${Object.entries(experienceLabel)
-                    .filter(([v]) => Number(v) < me.experience)
-                    .map(([, l]) => l)
-                    .join(", ")} colleagues.`
-                : "."}
+            {me.role === "admin" ? (
+              "As an admin you validate anyone's questions but your own."
+            ) : (
+              <>
+                You are <strong className="text-gray-700">{me.experience_label}</strong>
+                {me.experience > 1
+                  ? `: you validate questions written by ${Object.entries(experienceLabel)
+                      .filter(([v]) => Number(v) < me.experience)
+                      .map(([, l]) => l)
+                      .join(", ")} colleagues.`
+                  : ": a more experienced colleague validates your questions."}
+              </>
+            )}
           </>
         )}
       </p>
@@ -790,7 +794,7 @@ function QuestionView({
         </div>
       )}
 
-      <div className="flex flex-wrap gap-3 border-t border-gray-100 pt-4 text-sm">
+      <div className="flex flex-wrap gap-3 border-t border-gray-100 pt-4 text-sm empty:hidden">
         {q.can_edit && (
           <button onClick={onEdit} className="text-blue-600 hover:underline">
             Edit

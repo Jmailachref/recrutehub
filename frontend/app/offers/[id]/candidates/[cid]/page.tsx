@@ -155,7 +155,7 @@ export default function CandidateProfilePage() {
 
           <div className="grid grid-cols-2 gap-3 mb-5 text-sm">
             {[
-              { label: `Theory (QCM) · ${Math.round(session.weight_theory * 100)}%`, value: session.theory_score },
+              { label: `Theory (QCM, numbers) · ${Math.round(session.weight_theory * 100)}%`, value: session.theory_score },
               { label: `Practice (code) · ${Math.round(session.weight_practice * 100)}%`, value: session.practice_score },
             ].map((s) => (
               <div key={s.label} className="bg-gray-50 rounded-lg p-3 text-center">
