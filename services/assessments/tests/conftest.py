@@ -15,6 +15,7 @@ from app.main import app  # noqa: E402
 from rh_common import ApiError, internal, queue, tokens  # noqa: E402
 from rh_common.codeplay import codeplay  # noqa: E402
 from rh_common.db import Base, engine  # noqa: E402
+from rh_common.library import library  # noqa: E402
 
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 tokens.use_local_key(KEY.public_key())
@@ -96,6 +97,32 @@ class FakeBank:
         return dict(s)
 
 
+OWN = [
+    {"id": str(uuid.uuid4()), "language": "finance-de-marche", "skill": "Finance de marché", "level": 3, "kind": "numeric",
+     "title": "Simple interest", "statement": "1000 at 5% for 2 years?", "choices": None, "correct_choices": None,
+     "multiple": False, "answer_value": 100.0, "tolerance": 0.5, "unit": "EUR", "explanation": "1000 x 5% x 2",
+     "timer_seconds": 120},
+    {"id": str(uuid.uuid4()), "language": "finance-de-marche", "skill": "Finance de marché", "level": 3, "kind": "qcm",
+     "title": "Duration", "statement": "Duration measures?", "choices": ["maturity", "rate sensitivity"],
+     "correct_choices": [1], "multiple": False, "answer_value": None, "tolerance": None, "unit": None, "explanation": "",
+     "timer_seconds": 60},
+]
+
+
+class FakeLibrary:
+    """The company's own questions."""
+
+    def __init__(self):
+        self.draws = []
+
+    def draw(self, tenant_id, rows):
+        self.draws.append((str(tenant_id), rows))
+        return OWN[: sum(r["count"] for r in rows)]
+
+    def questions(self, ids):
+        return {q["id"]: q for q in OWN if q["id"] in {str(i) for i in ids}}
+
+
 class World:
     """Stands in for the other services, the queues and rate limits."""
 
@@ -162,7 +189,15 @@ def bank():
 
 
 @pytest.fixture
-def client(world, bank):
+def lib():
+    fake = FakeLibrary()
+    app.dependency_overrides[library] = lambda: fake
+    yield fake
+    app.dependency_overrides.pop(library, None)
+
+
+@pytest.fixture
+def client(world, bank, lib):
     return TestClient(app)
 
 

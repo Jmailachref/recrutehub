@@ -81,6 +81,28 @@ The offer page shows the apply link, the counts (applied, invited, submitted,
 scored), the test recipe, the CV scoring and the candidates ranked by test score,
 then CV points; each one opens to their CV, scores and every answer.
 
+## Test library
+
+**Library** groups skills by domain. *Dev / Data / Technique* is suggested to
+every company: its skills are Code Playground's languages and topics, with
+their shared code and QCM questions. Admins and editors add their company's
+own domains (Finance, Accounting...) and skills (Market finance, Excel...),
+which no other company sees.
+
+Each skill has the company's own questions per level (1 Beginner to 5 Master):
+multiple choice, or a number answer accepted within a tolerance (a net present
+value, a ratio, the result of an Excel formula). Anyone writes a question or
+proposes a correction to a validated one. A question goes into tests once a
+colleague more experienced than its author (Junior < Intermediate < Senior <
+Expert, set on the Team page), or an admin, validates it (an admin may validate
+their own); a correction replaces
+the validated version only then, and tests already sent keep the version their
+candidate saw.
+
+An offer's test draws, for each skill and level, Code Playground's code and QCM
+questions and the company's validated ones (the **Yours** column). Theory is
+the QCM and number questions, practice the code ones.
+
 ## CV points
 
 Each CV is scored in points against its offer's **CV scoring**, built from the

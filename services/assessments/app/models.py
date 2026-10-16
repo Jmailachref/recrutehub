@@ -29,7 +29,8 @@ class TestSession(Base):
     candidate_name: Mapped[str] = mapped_column(String(200))
     candidate_email: Mapped[str] = mapped_column(String(255))
     offer_title: Mapped[str] = mapped_column(String(255))
-    codeplay_test_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    # The questions Code Playground drew; None when the test has only library questions.
+    codeplay_test_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="invited")
     # Seconds the candidate gets once they start: the sum of the questions' timers.
     duration_seconds: Mapped[int] = mapped_column(Integer)
@@ -51,7 +52,11 @@ class TestSession(Base):
 
 
 class Answer(Base):
-    """The candidate's answer to one question of their test, and its score once judged."""
+    """The candidate's answer to one question of their test, and its score once judged.
+
+    source says where the question lives: "codeplay" (Code Playground's code
+    and QCM questions) or "library" (the company's own QCM and numeric ones).
+    """
 
     __tablename__ = "answers"
     __table_args__ = (UniqueConstraint("session_id", "problem_id", name="uq_answers_session_problem"),)
@@ -60,12 +65,14 @@ class Answer(Base):
     session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_sessions.id", ondelete="CASCADE"), index=True)
     problem_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     position: Mapped[int] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(10), default="codeplay", server_default="codeplay")
     kind: Mapped[str] = mapped_column(String(10))
     language: Mapped[str] = mapped_column(String(30))
     level: Mapped[int] = mapped_column(Integer)
     title: Mapped[str] = mapped_column(String(200))
     choices: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
     source_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    value: Mapped[float | None] = mapped_column(Float, nullable=True)  # numeric questions
     answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     submission_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     verdict: Mapped[str | None] = mapped_column(String(40), nullable=True)

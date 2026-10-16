@@ -113,13 +113,17 @@ SKILLS = [
 ]
 
 
+def plain(skills):
+    return [{k: v for k, v in s.items() if v is not None} for s in skills]
+
+
 def test_skills_are_kept_and_appear_once(client):
     offer = new_offer(client, skills=SKILLS)
-    assert offer["skills"] == SKILLS
+    assert plain(offer["skills"]) == SKILLS
     dup = [{"language": "sql", "priority": 1}, {"language": "sql", "priority": 2}]
     assert client.post("/offers", json={"title": "x", "skills": dup}, headers=RECRUITER).status_code == 400
     r = client.patch(f"/offers/{offer['id']}", json={"skills": SKILLS[:1]}, headers=RECRUITER)
-    assert r.json()["skills"] == SKILLS[:1]
+    assert plain(r.json()["skills"]) == SKILLS[:1]
 
 
 def test_generate_recipe_from_priorities(client):
@@ -160,7 +164,7 @@ def test_delete_only_without_candidates(client, monkeypatch):
 
 def test_any_competence_can_be_a_skill(client):
     skills = [{"language": "python", "priority": 1}, {"language": "Power BI", "priority": 4}, {"language": "C#", "priority": 5}]
-    assert new_offer(client, skills=skills)["skills"] == skills
+    assert plain(new_offer(client, skills=skills)["skills"]) == skills
     same = [{"language": "Power BI", "priority": 4}, {"language": "power bi", "priority": 5}]
     assert client.post("/offers", json={"title": "x", "skills": same}, headers=RECRUITER).status_code == 400
     odd = [{"language": "<script>", "priority": 4}]
@@ -193,3 +197,33 @@ def test_offers_save_while_the_cv_analyzer_is_down(client, analyzer):
     analyzer.down = False
     # The grid catches up when it is read.
     assert client.get(f"/offers/{offer['id']}/grid", headers=RECRUITER).json()["criteria"][0]["id"] == "sql"
+
+
+def test_the_company_library_joins_the_stock_and_the_test(client, lib, analyzer):
+    from tests.conftest import ACME
+
+    lib.rows[ACME] = [
+        {"language": "finance-de-marche", "level": 3, "count": 5},
+        {"language": "python", "level": 5, "count": 2},
+    ]
+    skills = [
+        {"language": "finance-de-marche", "priority": 1, "label": "Finance de marché"},
+        {"language": "python", "priority": 2},
+    ]
+    offer = new_offer(client, skills=skills, question_budget=10)
+    # The CV is searched for the skill's name, not its key.
+    assert analyzer.offers[offer["id"]]["skills"][0]["language"] == "finance-de-marche"
+    stock = {(s["language"], s["level"]): s for s in client.get("/stock", headers=RECRUITER).json()}
+    assert stock[("finance-de-marche", 3)] == {"language": "finance-de-marche", "level": 3, "code": 0, "qcm": 0, "library": 5}
+    assert stock[("python", 5)]["library"] == 2 and stock[("python", 5)]["code"] == 6
+
+    recipe = client.post(f"/offers/{offer['id']}/recipe/generate", headers=RECRUITER).json()
+    rows = {r["language"]: r for r in recipe["rows"]}
+    assert (rows["finance-de-marche"]["library_count"], rows["finance-de-marche"]["code_count"]) == (5, 0)
+    # Python: 40% code, then the company's questions before Code Playground's QCM.
+    assert (rows["python"]["code_count"], rows["python"]["library_count"], rows["python"]["qcm_count"]) == (2, 2, 1)
+    assert recipe["total"] == 10
+
+    too_many = {"rows": [{"language": "finance-de-marche", "level": 3, "library_count": 6}]}
+    assert client.put(f"/offers/{offer['id']}/recipe", json=too_many, headers=RECRUITER).status_code == 409
+    assert client.post(f"/offers/{offer['id']}/publish", headers=RECRUITER).status_code == 200

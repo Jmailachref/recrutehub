@@ -37,7 +37,7 @@ class CvAnalyzer:
 
     def save_offer(self, ref: str, title: str, skills: list[dict], criteria: list[dict] | None = None, rebuild: bool = False) -> dict:
         """Creates or updates an offer. Without criteria the grid follows the skills and keeps a recruiter's edits."""
-        body: dict = {"title": title, "skills": [{"name": s["language"], "priority": s["priority"]} for s in skills]}
+        body: dict = {"title": title, "skills": [{"name": s.get("label") or s["language"], "priority": s["priority"]} for s in skills]}
         if criteria is not None:
             body["criteria"] = criteria
         if rebuild:

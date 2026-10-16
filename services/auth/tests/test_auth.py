@@ -142,3 +142,18 @@ def test_services_read_user_names(client):
     ).json()["token"]
     r = TestClient(app).post("/internal/users/names", json=body, headers={"Authorization": f"Bearer {service}"})
     assert r.json() == {rita["id"]: "Rita Moreau", me["id"]: me["full_name"] or me["email"]}
+
+
+def test_admin_sets_experience_and_services_read_it(client):
+    login(client)
+    rita = client.post("/users", json={"email": "rita@acme.com", "password": "recruiter-pw", "experience": 3}).json()
+    assert rita["experience"] == 3
+    assert client.post("/users", json={"email": "x@acme.com", "password": "recruiter-pw", "experience": 5}).status_code == 400
+    assert client.patch(f"/users/{rita['id']}", json={"experience": 4}).json()["experience"] == 4
+    body = {"ids": [rita["id"]]}
+    assert client.post("/internal/users/profiles", json=body).status_code == 403
+    service = client.post(
+        "/internal/service-token", headers={"X-Service-Name": "questions", "X-Service-Secret": "test-secret"}
+    ).json()["token"]
+    r = TestClient(app).post("/internal/users/profiles", json=body, headers={"Authorization": f"Bearer {service}"})
+    assert [(p["id"], p["role"], p["experience"]) for p in r.json()] == [(rita["id"], "recruiter", 4)]

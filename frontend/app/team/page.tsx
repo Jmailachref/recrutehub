@@ -1,14 +1,14 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { api, ApiError, roleLabel, User } from "@/lib/api";
+import { api, ApiError, experienceLabel, roleLabel, User } from "@/lib/api";
 import { useUser } from "../AppShell";
 
 export default function TeamPage() {
   const me = useUser();
   const [users, setUsers] = useState<User[]>([]);
   const [error, setError] = useState("");
-  const [form, setForm] = useState({ email: "", full_name: "", password: "", role: "recruiter" });
+  const [form, setForm] = useState({ email: "", full_name: "", password: "", role: "recruiter", experience: 1 });
 
   const load = () => api<User[]>("/api/auth/users").then(setUsers).catch((e) => setError(e.message));
   useEffect(() => {
@@ -20,7 +20,7 @@ export default function TeamPage() {
     setError("");
     try {
       await api("/api/auth/users", { method: "POST", body: JSON.stringify(form) });
-      setForm({ email: "", full_name: "", password: "", role: "recruiter" });
+      setForm({ email: "", full_name: "", password: "", role: "recruiter", experience: 1 });
       load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not add the user");
@@ -43,7 +43,10 @@ export default function TeamPage() {
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-800">Team</h1>
-      <p className="text-gray-500 text-sm mt-1 mb-6">People at {me.tenant_name} who can sign in.</p>
+      <p className="text-gray-500 text-sm mt-1 mb-6">
+        People at {me.tenant_name} who can sign in. Their experience decides whose library questions they can validate: someone
+        more experienced than the author, or an admin.
+      </p>
       {error && <p className="text-red-600 text-sm mb-4">{error}</p>}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto mb-6">
         <table className="w-full text-sm">
@@ -52,6 +55,7 @@ export default function TeamPage() {
               <th className="px-5 py-3 text-left">Name</th>
               <th className="px-5 py-3 text-left">Email</th>
               <th className="px-5 py-3 text-left">Role</th>
+              <th className="px-5 py-3 text-left">Experience</th>
               <th className="px-5 py-3 text-right">Access</th>
             </tr>
           </thead>
@@ -68,6 +72,19 @@ export default function TeamPage() {
                     className="border border-gray-300 rounded px-1 py-0.5 text-sm bg-white disabled:opacity-60"
                   >
                     {Object.entries(roleLabel).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td className="px-5 py-3">
+                  <select
+                    value={u.experience}
+                    onChange={(e) => change(u, { experience: Number(e.target.value) })}
+                    className="border border-gray-300 rounded px-1 py-0.5 text-sm bg-white"
+                  >
+                    {Object.entries(experienceLabel).map(([value, label]) => (
                       <option key={value} value={value}>
                         {label}
                       </option>
@@ -108,6 +125,13 @@ export default function TeamPage() {
           />
           <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className={field}>
             {Object.entries(roleLabel).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <select value={form.experience} onChange={(e) => setForm({ ...form, experience: Number(e.target.value) })} className={field} aria-label="Experience">
+            {Object.entries(experienceLabel).map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
               </option>

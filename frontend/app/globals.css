@@ -109,6 +109,9 @@
   .choices { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
   .choice { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); cursor: pointer; white-space: pre-wrap; }
   .choice-on { border-color: var(--accent); }
+  .number-answer { display: grid; gap: 6px; max-width: 320px; }
+  .number-row { display: flex; align-items: center; gap: 8px; }
+  .number-row input { flex: 1; font-size: 18px; }
   .editor { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .examples-title { margin-top: 8px; }
   .example { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; background: var(--surface); display: grid; gap: 8px; }

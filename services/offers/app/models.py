@@ -33,7 +33,8 @@ class JobOffer(Base):
     cv_score_threshold: Mapped[int] = mapped_column(Integer, default=60)
     weight_theory: Mapped[float] = mapped_column(Float, default=0.5)
     weight_practice: Mapped[float] = mapped_column(Float, default=0.5)
-    # What the recruiter asked for: [{"language": "python", "priority": 1}, ...].
+    # What the recruiter asked for: [{"language": "python", "priority": 1, "label": None}, ...].
+    # language is a skill's key in the test library, or any competence the CV should show.
     # Priorities 1-3 are tested; 4 (CV only) and 5 (bonus) are not.
     skills: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -45,12 +46,16 @@ class JobOffer(Base):
 
 
 class RecipeRow(Base):
-    """How many code and QCM questions of one language (or topic) and level the test has."""
+    """How many questions of one skill and level the test has.
+
+    Code and QCM questions come from Code Playground; library questions from
+    the company's own library (the questions service).
+    """
 
     __tablename__ = "offer_recipe"
     __table_args__ = (
         CheckConstraint("level BETWEEN 1 AND 5", name="ck_offer_recipe_level"),
-        CheckConstraint("code_count >= 0 AND qcm_count >= 0", name="ck_offer_recipe_counts"),
+        CheckConstraint("code_count >= 0 AND qcm_count >= 0 AND library_count >= 0", name="ck_offer_recipe_counts"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -60,5 +65,6 @@ class RecipeRow(Base):
     level: Mapped[int] = mapped_column(Integer)
     code_count: Mapped[int] = mapped_column(Integer, default=0)
     qcm_count: Mapped[int] = mapped_column(Integer, default=0)
+    library_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     offer: Mapped[JobOffer] = relationship(back_populates="recipe")

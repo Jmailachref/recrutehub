@@ -7,6 +7,7 @@ export type User = {
   email: string;
   full_name: string;
   role: "admin" | "editor" | "recruiter";
+  experience: number;
   is_active: boolean;
   tenant_id: string;
   tenant_name: string;
@@ -56,11 +57,19 @@ export const roleLabel: Record<User["role"], string> = {
   recruiter: "Recruiter",
 };
 
+// How experienced an employee is. A library question is validated by someone more experienced than its author.
+export const experienceLabel: Record<number, string> = {
+  1: "Junior",
+  2: "Intermediate",
+  3: "Senior",
+  4: "Expert",
+};
+
 export type OfferStatus = "draft" | "active" | "archived";
 
-export type RecipeRow = { language: string; level: number; code_count: number; qcm_count: number };
+export type RecipeRow = { language: string; level: number; code_count: number; qcm_count: number; library_count: number };
 
-export type Skill = { language: string; priority: number };
+export type Skill = { language: string; priority: number; label?: string | null };
 
 export const priorityLabel: Record<number, string> = {
   1: "Essential",
@@ -81,7 +90,14 @@ const TOPIC_NAMES: Record<string, string> = {
   docker: "Docker",
   kubernetes: "Kubernetes",
 };
-export const topicName = (t: string) => TOPIC_NAMES[t] ?? t.charAt(0).toUpperCase() + t.slice(1);
+// Names of the company's own skills, filled in when the catalog loads (their keys read badly).
+const SKILL_NAMES: Record<string, string> = {};
+export const rememberSkillNames = (skills: { key: string; name?: string | null }[]) => {
+  for (const s of skills) if (s.name) SKILL_NAMES[s.key] = s.name;
+};
+// What the CV is searched for: a company skill's name, else the key itself.
+export const skillLabel = (t: string) => SKILL_NAMES[t] ?? t;
+export const topicName = (t: string) => SKILL_NAMES[t] ?? TOPIC_NAMES[t] ?? t.charAt(0).toUpperCase() + t.slice(1);
 
 // How the skill picker groups the question bank's languages and topics.
 const TOPIC_GROUPS: Record<string, string> = {
@@ -112,13 +128,92 @@ export type Offer = {
 export type OfferSummary = Pick<Offer, "id" | "title" | "status" | "question_count" | "question_budget" | "created_at">;
 
 export type Recipe = {
-  rows: (RecipeRow & { stock_code: number; stock_qcm: number; available_levels: number[] })[];
+  rows: (RecipeRow & { stock_code: number; stock_qcm: number; stock_library: number; available_levels: number[] })[];
   total: number;
   budget: number;
   warnings: { code: string; message: string; row: number | null; skill: string | null }[];
 };
 
-export type Stock = { language: string; level: number; code: number; qcm: number };
+export type Stock = { language: string; level: number; code: number; qcm: number; library: number };
+
+// The test library: domains, their skills, and each company's questions.
+export type LibrarySkill = {
+  id: string;
+  domain_id: string;
+  key: string;
+  name: string;
+  builtin: boolean;
+  own: boolean;
+  library: { level: number; approved: number; pending: number; shared: number }[];
+};
+
+export type Domain = { id: string; name: string; description: string; builtin: boolean; skills: LibrarySkill[] };
+
+export type QuestionStatus = "draft" | "pending" | "approved" | "rejected" | "retired";
+
+export type Person = { id: string; name: string; experience: number | null };
+
+export type LibraryQuestionSummary = {
+  id: string;
+  skill_id: string;
+  skill: string;
+  domain: string;
+  level: number;
+  kind: "qcm" | "numeric";
+  title: string;
+  status: QuestionStatus;
+  author: Person;
+  replaces_id: string | null;
+  updated_at: string | null;
+};
+
+export type LibraryQuestion = LibraryQuestionSummary & {
+  statement: string;
+  choices: string[] | null;
+  correct_choices: number[] | null;
+  answer_value: number | null;
+  tolerance: number | null;
+  unit: string | null;
+  explanation: string;
+  timer_seconds: number;
+  reviewer: Person | null;
+  review_comment: string;
+  reviewed_at: string | null;
+  used_count: number;
+  can_edit: boolean;
+  can_review: boolean;
+};
+
+// Code Playground's questions, shared by every company on the built-in skills (read-only).
+export type BankQuestion = { id: string; title: string; kind: "code" | "qcm"; level: number };
+
+export type BankQuestionDetail = BankQuestion & {
+  statement: string;
+  choices: string[] | null;
+  correct_choices: number[] | null;
+  starter_code: string | null;
+  examples: { name: string; input: string; expected_output: string }[];
+  hidden_tests: number;
+  timer_seconds: number;
+};
+
+export type LibraryMe = { id: string; role: User["role"]; experience: number; experience_label: string; can_curate: boolean };
+
+export const questionStatusLabel: Record<QuestionStatus, string> = {
+  draft: "Draft",
+  pending: "To validate",
+  approved: "Validated",
+  rejected: "To fix",
+  retired: "Replaced",
+};
+
+export const questionStatusColor: Record<QuestionStatus, string> = {
+  draft: "bg-gray-100 text-gray-600",
+  pending: "bg-amber-100 text-amber-700",
+  approved: "bg-green-100 text-green-700",
+  rejected: "bg-red-100 text-red-600",
+  retired: "bg-gray-100 text-gray-400",
+};
 
 export const levelLabel: Record<number, string> = {
   1: "Beginner",
@@ -251,7 +346,8 @@ export type TestSummary = {
 export type TestAnswer = {
   problem_id: string;
   position: number;
-  kind: "code" | "qcm";
+  source: "codeplay" | "library";
+  kind: "code" | "qcm" | "numeric";
   language: string;
   level: number;
   title: string;
@@ -260,6 +356,12 @@ export type TestAnswer = {
   correct_choices: number[] | null;
   choices: number[] | null;
   source_code: string | null;
+  value: number | null;
+  answer_value: number | null;
+  tolerance: number | null;
+  unit: string | null;
+  explanation: string;
+  skill: string | null;
   verdict: string | null;
   score: number | null;
 };

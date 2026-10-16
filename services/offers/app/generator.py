@@ -2,7 +2,8 @@
 
 Priorities 1 (core), 2 (important) and 3 (secondary) share the question
 budget 3:2:1. Each skill takes the level closest to 3 that has questions,
-then splits its share 60% QCM, 40% code, within what the bank has. Questions
+then splits its share 40% code and 60% theory, within what the banks have:
+the company's own library questions first, then Code Playground's QCM. Questions
 a skill cannot fill go to the other skills, core ones first. Priorities 4 and
 5 are kept on the offer but get no questions.
 """
@@ -33,17 +34,26 @@ def shares(budget: int, priorities: list[int]) -> list[int]:
 def pick_level(language: str, stock: dict[tuple[str, int], dict]) -> int | None:
     for level in LEVEL_ORDER:
         s = stock.get((language, level))
-        if s and s["code"] + s["qcm"] > 0:
+        if s and size(s) > 0:
             return level
     return None
 
 
-def split(total: int, s: dict) -> tuple[int, int]:
-    """(code, qcm) for `total` questions: 40% code, and whatever one type lacks goes to the other."""
+def size(s: dict) -> int:
+    return s["code"] + s["qcm"] + s.get("library", 0)
+
+
+def split(total: int, s: dict) -> tuple[int, int, int]:
+    """(code, qcm, library) for `total` questions: 40% code, the rest theory, and whatever one type lacks goes to the others."""
     code = min(total * 2 // 5, s["code"])
-    qcm = min(total - code, s["qcm"])
-    code = min(total - qcm, s["code"])
-    return code, qcm
+    library = min(total - code, s.get("library", 0))
+    qcm = min(total - code - library, s["qcm"])
+    code = min(total - library - qcm, s["code"])
+    return code, qcm, library
+
+
+def count(row: dict) -> int:
+    return row["code_count"] + row["qcm_count"] + row["library_count"]
 
 
 def generate(skills: list[dict], budget: int, stock: dict[tuple[str, int], dict]) -> tuple[list[dict], list[dict]]:
@@ -58,15 +68,15 @@ def generate(skills: list[dict], budget: int, stock: dict[tuple[str, int], dict]
             continue
         if level != 3:
             warnings.append({"code": "level_adjusted", "skill": language, "message": f"No level 3 questions: level {level} used instead"})
-        code, qcm = split(share, stock[(language, level)])
-        rows.append({"language": language, "level": level, "code_count": code, "qcm_count": qcm})
+        code, qcm, library = split(share, stock[(language, level)])
+        rows.append({"language": language, "level": level, "code_count": code, "qcm_count": qcm, "library_count": library})
         wanted.append(share)
 
     # Hand questions a skill could not fill to the others, core skills first.
-    missing = budget - sum(r["code_count"] + r["qcm_count"] for r in rows)
+    missing = budget - sum(count(r) for r in rows)
     for row, share in zip(rows, wanted):
-        if row["code_count"] + row["qcm_count"] < share:
-            got = row["code_count"] + row["qcm_count"]
+        if count(row) < share:
+            got = count(row)
             warnings.append(
                 {"code": "stock_reduced", "skill": row["language"], "message": f"Only {got} of {share} questions available at level {row['level']}"}
             )
@@ -74,8 +84,8 @@ def generate(skills: list[dict], budget: int, stock: dict[tuple[str, int], dict]
         if missing <= 0:
             break
         s = stock[(row["language"], row["level"])]
-        have = row["code_count"] + row["qcm_count"]
-        code, qcm = split(min(have + missing, s["code"] + s["qcm"]), s)
-        missing -= code + qcm - have
-        row["code_count"], row["qcm_count"] = code, qcm
+        have = count(row)
+        code, qcm, library = split(min(have + missing, size(s)), s)
+        missing -= code + qcm + library - have
+        row["code_count"], row["qcm_count"], row["library_count"] = code, qcm, library
     return rows, warnings

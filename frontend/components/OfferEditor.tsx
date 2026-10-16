@@ -4,17 +4,20 @@
 //   1. the job: what candidates see, and the skills it asks for
 //   2. the test: which questions candidates get, built from the skills
 //   3. the CV scoring: how each CV earns points, filled in from the skills
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   api,
   ApiError,
+  Domain,
   Grid,
   levelLabel,
   Offer,
   priorityLabel,
   Recipe,
   RecipeRow,
+  rememberSkillNames,
   Stock,
   topicGroup,
   topicName,
@@ -56,6 +59,8 @@ export default function OfferEditor({ offerId: initialId }: { offerId?: string }
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [stock, setStock] = useState<Stock[] | null>(null);
+  // The skills to pick from, by domain; null until loaded or if the library is down.
+  const [domains, setDomains] = useState<Domain[] | null>(null);
   // language → priority (1-5); absent = not selected
   const [priorities, setPriorities] = useState<Record<string, number>>({});
 
@@ -80,6 +85,12 @@ export default function OfferEditor({ offerId: initialId }: { offerId?: string }
     api<Stock[]>("/api/offers/stock")
       .then(setStock)
       .catch(() => setStock([]));
+    api<Domain[]>("/api/questions/catalog")
+      .then((d) => {
+        rememberSkillNames(d.flatMap((x) => x.skills));
+        setDomains(d);
+      })
+      .catch(() => setDomains(null));
   }, []);
 
   useEffect(() => {
@@ -93,6 +104,7 @@ export default function OfferEditor({ offerId: initialId }: { offerId?: string }
         setTitle(o.title);
         setDescription(o.description);
         setStatus(o.status);
+        rememberSkillNames(o.skills.map((s) => ({ key: s.language, name: s.label })));
         const loaded = Object.fromEntries(o.skills.map((s) => [s.language, s.priority]));
         setPriorities(loaded);
         setRows(o.recipe);
@@ -115,23 +127,39 @@ export default function OfferEditor({ offerId: initialId }: { offerId?: string }
   }, [priorities, dropped]);
 
   const stockFor = (language: string, level: number) =>
-    stock?.find((s) => s.language === language && s.level === level) ?? { code: 0, qcm: 0 };
+    stock?.find((s) => s.language === language && s.level === level) ?? { code: 0, qcm: 0, library: 0 };
   const levelsFor = (language: string) =>
     (stock ?? [])
       .filter((s) => s.language === language)
       .map((s) => s.level)
       .sort();
 
+  // The company's own skills, whose name is not their key: the CV is searched for the name.
+  const ownNames = useMemo(
+    () => Object.fromEntries((domains ?? []).flatMap((d) => d.skills.filter((s) => s.own).map((s) => [s.key, s.name]))),
+    [domains],
+  );
+
   const byGroup = useMemo(() => {
     const groups: Record<string, string[]> = {};
-    const bank = new Set((stock ?? []).map((s) => s.language));
-    for (const language of [...bank].sort()) {
-      (groups[topicGroup(language)] ??= []).push(language);
+    const known = new Set<string>();
+    if (domains) {
+      for (const d of domains) {
+        if (d.skills.length === 0) continue;
+        groups[d.name] = d.skills.map((s) => s.key);
+        d.skills.forEach((s) => known.add(s.key));
+      }
     }
-    const others = Object.keys(priorities).filter((language) => !bank.has(language));
+    // Without the library, group the question bank's topics as before.
+    for (const language of [...new Set((stock ?? []).map((s) => s.language))].sort()) {
+      if (known.has(language)) continue;
+      (groups[domains ? "Other topics" : topicGroup(language)] ??= []).push(language);
+      known.add(language);
+    }
+    const others = Object.keys(priorities).filter((language) => !known.has(language));
     if (others.length) groups["Other competences"] = others;
     return groups;
-  }, [stock, priorities]);
+  }, [domains, stock, priorities]);
 
   function toggleSkill(language: string) {
     setDropped((prev) => {
@@ -168,7 +196,9 @@ export default function OfferEditor({ offerId: initialId }: { offerId?: string }
     const body = JSON.stringify({
       title,
       description,
-      skills: Object.entries(priorities).map(([language, priority]) => ({ language, priority })),
+      skills: Object.entries(priorities).map(([language, priority]) =>
+        ownNames[language] ? { language, priority, label: ownNames[language] } : { language, priority },
+      ),
     });
     const offer = offerId
       ? await api<Offer>(`/api/offers/offers/${offerId}`, { method: "PATCH", body })
@@ -187,7 +217,13 @@ export default function OfferEditor({ offerId: initialId }: { offerId?: string }
       const offer = await saveOffer();
       if (!offer) return;
       const recipe = await api<Recipe>(`/api/offers/offers/${offer.id}/recipe/generate`, { method: "POST" });
-      const generated = recipe.rows.map(({ language, level, code_count, qcm_count }) => ({ language, level, code_count, qcm_count }));
+      const generated = recipe.rows.map(({ language, level, code_count, qcm_count, library_count }) => ({
+        language,
+        level,
+        code_count,
+        qcm_count,
+        library_count,
+      }));
       setRows(generated);
       setSavedRows(generated);
       setWarnings(recipe.warnings);
@@ -230,7 +266,12 @@ export default function OfferEditor({ offerId: initialId }: { offerId?: string }
         const next = { ...r, ...patch };
         // Keep the counts within what the new level has.
         const s = stockFor(next.language, next.level);
-        return { ...next, code_count: Math.min(next.code_count, s.code), qcm_count: Math.min(next.qcm_count, s.qcm) };
+        return {
+          ...next,
+          code_count: Math.min(next.code_count, s.code),
+          qcm_count: Math.min(next.qcm_count, s.qcm),
+          library_count: Math.min(next.library_count, s.library),
+        };
       }),
     );
   }
@@ -239,7 +280,7 @@ export default function OfferEditor({ offerId: initialId }: { offerId?: string }
   const selectedCount = Object.keys(priorities).length;
   const testCount = Object.values(priorities).filter((p) => p <= 3).length;
   const cvOnlyCount = selectedCount - testCount;
-  const totalUsed = rows.reduce((s, r) => s + r.qcm_count + r.code_count, 0);
+  const totalUsed = rows.reduce((s, r) => s + r.qcm_count + r.code_count + r.library_count, 0);
   const stale = rows.length > 0 && builtFor !== testedKey(priorities);
   // Live warnings only make sense for the saved test; the question budget is not shown here.
   const shownWarnings = warnings.filter((w) => w.code !== "budget_mismatch" && w.code !== "empty" && !(dirty && w.code === "stock_low"));
@@ -343,12 +384,17 @@ export default function OfferEditor({ offerId: initialId }: { offerId?: string }
               </div>
             ))}
             {stock === null && <p className="text-sm text-gray-400">Loading skills…</p>}
-            {stock?.length === 0 && (
+            {stock?.length === 0 && !domains && (
               <p className="text-sm text-gray-400">The question bank is empty. Add questions to Code Playground first.</p>
             )}
           </div>
           <p className="text-xs text-gray-400 mt-3">
             P1 core, P2 important and P3 secondary skills are tested; P4 CV only and P5 bonus are only looked for in the CV.
+            Missing a skill or questions?{" "}
+            <Link href="/library" className="text-blue-600 hover:underline">
+              Open the library
+            </Link>
+            .
           </p>
         </div>
       </Section>
@@ -379,6 +425,9 @@ export default function OfferEditor({ offerId: initialId }: { offerId?: string }
                     <th className="px-4 py-3 text-center">Level</th>
                     <th className="px-4 py-3 text-center">QCM</th>
                     <th className="px-4 py-3 text-center">Code</th>
+                    <th className="px-4 py-3 text-center" title="Validated questions of your company's library">
+                      Yours
+                    </th>
                     <th className="px-4 py-3 text-center">Total</th>
                   </tr>
                 </thead>
@@ -447,7 +496,26 @@ export default function OfferEditor({ offerId: initialId }: { offerId?: string }
                             <span className="text-xs text-gray-400">{s.code} avail.</span>
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-center font-semibold text-gray-800 tabular-nums">{row.qcm_count + row.code_count}</td>
+                        <td className="px-4 py-3 text-center">
+                          <div className="flex flex-col items-center gap-0.5">
+                            <select
+                              value={row.library_count}
+                              onChange={(e) => updateRow(i, { library_count: Number(e.target.value) })}
+                              className={selectCls}
+                              disabled={s.library === 0}
+                            >
+                              {range(Math.max(row.library_count, Math.min(MAX_PER_ROW, s.library))).map((n) => (
+                                <option key={n} value={n}>
+                                  {n}
+                                </option>
+                              ))}
+                            </select>
+                            <span className="text-xs text-gray-400">{s.library} avail.</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-center font-semibold text-gray-800 tabular-nums">
+                          {row.qcm_count + row.code_count + row.library_count}
+                        </td>
                       </tr>
                     );
                   })}

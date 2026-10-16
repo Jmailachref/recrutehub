@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from conftest import ACME, CORRECT, GLOBEX, QUESTIONS, candidate_headers, token
+from conftest import ACME, CORRECT, GLOBEX, OWN, QUESTIONS, candidate_headers, token
 
 from app import scoring
 from app.models import TestSession
@@ -14,11 +14,11 @@ def invite(client, world):
     return r.json()
 
 
-def score(world, bank):
+def score(world, bank, lib=None):
     jobs = [p for q, t, p in world.jobs if t == "score_session"]
     with _sessions()() as db:
         for job in jobs:
-            scoring.score_session(job, db, bank, sleep=lambda s: None)
+            scoring.score_session(job, db, bank, sleep=lambda s: None, lib=lib)
 
 
 def test_health(client):
@@ -174,3 +174,45 @@ def test_rate_limited_runs(client, world):
     world.limited = True
     r = client.post("/me/runs", json={"problem_id": QUESTIONS[0]["id"], "source_code": "x"}, headers=me)
     assert r.status_code == 429
+
+
+def test_library_questions_join_the_test(client, world, bank, lib):
+    world.offer["recipe"] = [
+        {"language": "finance-de-marche", "level": 3, "code_count": 0, "qcm_count": 0, "library_count": 2},
+        {"language": "python", "level": 2, "code_count": 2, "qcm_count": 0, "library_count": 0},
+    ]
+    bank_questions = list(QUESTIONS)
+    QUESTIONS[:] = QUESTIONS[:2]
+    try:
+        s = invite(client, world)
+        assert lib.draws == [(str(ACME), [{"language": "finance-de-marche", "level": 3, "count": 2}])]
+        me = candidate_headers(s)
+        q = client.post("/me/start", headers=me).json()["questions"]
+        # The recipe's order: the finance questions first, then python's.
+        assert [x["kind"] for x in q] == ["numeric", "qcm", "code", "code"]
+        assert q[0]["unit"] == "EUR" and "answer_value" not in {k for k, v in q[0].items() if v is not None}
+        assert "correct_choices" not in q[1]
+        num, qcm = q[0]["id"], q[1]["id"]
+        assert client.put(f"/me/answers/{num}", json={"value": 100.4}, headers=me).status_code == 204
+        assert client.put(f"/me/answers/{num}", json={"choices": [1]}, headers=me).status_code == 400
+        assert client.put(f"/me/answers/{qcm}", json={"choices": [1]}, headers=me).status_code == 204
+        assert client.get("/me", headers=me).json()["questions"][0]["answer_value"] == 100.4
+        client.put(f"/me/answers/{q[2]['id']}", json={"source_code": "pass"}, headers=me)
+        client.post("/me/submit", headers=me)
+        score(world, bank, lib)
+        detail = client.get(f"/sessions/{s['id']}", headers=token()).json()
+        assert [a["verdict"] for a in detail["answers"]] == ["correct", "correct", "accepted", "no_answer"]
+        assert detail["answers"][0]["answer_value"] == OWN[0]["answer_value"] and detail["answers"][0]["source"] == "library"
+        # Theory 100, practice 50: 0.25 * 100 + 0.75 * 50.
+        assert (detail["theory_score"], detail["practice_score"], detail["total_score"]) == (100.0, 50.0, 62.5)
+    finally:
+        QUESTIONS[:] = bank_questions
+
+
+def test_a_test_of_library_questions_only(client, world, bank, lib):
+    world.offer["recipe"] = [{"language": "finance-de-marche", "level": 3, "code_count": 0, "qcm_count": 0, "library_count": 1}]
+    s = invite(client, world)
+    assert bank.tests == {}
+    me = candidate_headers(s)
+    q = client.post("/me/start", headers=me).json()
+    assert q["numeric_count"] == 1 and q["duration_seconds"] == 120

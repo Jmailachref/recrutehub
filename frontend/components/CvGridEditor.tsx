@@ -2,7 +2,7 @@
 
 // The CV scoring grid: one line per competence, its level, the words that show it
 // in a CV and its points. Lines for the offer's skills follow them; recruiters add others.
-import { Criterion, formatPoints, priorityLabel, topicName } from "@/lib/api";
+import { Criterion, formatPoints, priorityLabel, skillLabel, topicName } from "@/lib/api";
 
 // Points a line earns by level when the CV shows it, and costs when missing (as CV Analyzer builds them).
 export const PRIORITY_POINTS: Record<number, [number, number]> = { 1: [1, -20], 2: [0.5, 0], 3: [0.1, 0], 4: [0.5, 0], 5: [0.1, 0] };
@@ -25,7 +25,7 @@ export type GridRow = {
 
 export function skillRow(language: string, priority: number): GridRow {
   const [present, absent] = PRIORITY_POINTS[priority];
-  return { skill: language, touched: false, id: "", label: language, level: priority, termsText: "", default_synonyms: true, points_present: present, points_absent: absent };
+  return { skill: language, touched: false, id: "", label: skillLabel(language), level: priority, termsText: "", default_synonyms: true, points_present: present, points_absent: absent };
 }
 
 // Lines for the selected skills (best priority first), then the added competences.
@@ -54,7 +54,10 @@ function levelOf(c: Criterion, priority: number | undefined): number {
 // Lines of a saved grid, linked back to the offer's skills.
 export function rowsFrom(criteria: Criterion[], priorities: Record<string, number>): GridRow[] {
   return criteria.map((c) => {
-    const skill = Object.keys(priorities).find((language) => language.toLowerCase() === c.label.toLowerCase()) ?? null;
+    const skill =
+      Object.keys(priorities).find((language) =>
+        [language, skillLabel(language)].some((name) => name.toLowerCase() === c.label.toLowerCase()),
+      ) ?? null;
     const priority = skill ? priorities[skill] : undefined;
     const level = levelOf(c, priority);
     const [present, absent] = priority ? PRIORITY_POINTS[priority] : [NaN, NaN];

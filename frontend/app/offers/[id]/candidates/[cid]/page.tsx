@@ -155,7 +155,7 @@ export default function CandidateProfilePage() {
 
           <div className="grid grid-cols-2 gap-3 mb-5 text-sm">
             {[
-              { label: `Theory (QCM) · ${Math.round(session.weight_theory * 100)}%`, value: session.theory_score },
+              { label: `Theory (QCM, numbers) · ${Math.round(session.weight_theory * 100)}%`, value: session.theory_score },
               { label: `Practice (code) · ${Math.round(session.weight_practice * 100)}%`, value: session.practice_score },
             ].map((s) => (
               <div key={s.label} className="bg-gray-50 rounded-lg p-3 text-center">
@@ -212,7 +212,7 @@ function Answer({ a }: { a: TestAnswer }) {
         </p>
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded whitespace-nowrap">
-            {a.kind === "code" ? "code" : "qcm"} · {topicName(a.language)} · {levelLabel[a.level]}
+            {a.kind === "numeric" ? "number" : a.kind} · {a.skill ?? topicName(a.language)} · {levelLabel[a.level]}
           </span>
           {done && (
             <span className={`text-xs px-2 py-0.5 rounded font-medium whitespace-nowrap ${right ? "bg-green-100 text-green-700" : "bg-red-100 text-red-600"}`}>
@@ -243,6 +243,20 @@ function Answer({ a }: { a: TestAnswer }) {
               </div>
             );
           })}
+        </div>
+      ) : a.kind === "numeric" ? (
+        <div className="text-sm space-y-1">
+          <p>
+            <span className="text-gray-500">Answered:</span>{" "}
+            <span className={`font-semibold tabular-nums ${right ? "text-green-700" : "text-red-600"}`}>
+              {a.value ?? "no answer"} {a.value != null && a.unit}
+            </span>
+          </p>
+          <p className="text-gray-500">
+            Right answer: <span className="tabular-nums text-gray-800">{a.answer_value} {a.unit}</span>
+            {a.tolerance ? ` (± ${a.tolerance})` : ""}
+          </p>
+          {a.explanation && <p className="text-xs text-gray-500 whitespace-pre-wrap">{a.explanation}</p>}
         </div>
       ) : a.source_code ? (
         <>

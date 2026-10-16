@@ -14,11 +14,13 @@ from rh_common import ApiError, Principal, create_app, internal, require_role
 from rh_common.codeplay import CodePlayground, codeplay
 from rh_common.cvanalyzer import CvAnalyzer, cvanalyzer
 from rh_common.db import get_session
+from rh_common.library import Library, library
 
 app = create_app("offers")
 
 Db = Annotated[Session, Depends(get_session)]
 Bank = Annotated[CodePlayground, Depends(codeplay)]
+Lib = Annotated[Library, Depends(library)]
 Analyzer = Annotated[CvAnalyzer, Depends(cvanalyzer)]
 Staff = Annotated[Principal, Depends(require_role("admin", "editor", "recruiter"))]
 Writer = Annotated[Principal, Depends(require_role("admin", "recruiter"))]
@@ -31,8 +33,11 @@ log = logging.getLogger(__name__)
 
 
 class SkillIn(BaseModel):
-    language: SkillName = Field(description="A question bank language or topic (tested), or any other competence")
+    language: SkillName = Field(description="A skill's key in the test library (tested), or any other competence")
     priority: int = Field(ge=1, le=5, description="1 core, 2 important, 3 secondary (tested); 4 CV only, 5 bonus")
+    label: str | None = Field(
+        default=None, max_length=60, description="The skill's name, when it differs from its key: what the CV is searched for"
+    )
 
 
 def distinct_languages(skills: list[SkillIn]) -> list[SkillIn]:
@@ -42,6 +47,11 @@ def distinct_languages(skills: list[SkillIn]) -> list[SkillIn]:
 
 
 Skills = Annotated[list[SkillIn], Field(max_length=40), AfterValidator(distinct_languages)]
+
+
+def skills_of(skills: list[SkillIn]) -> list[dict]:
+    """As stored on the offer: no label when the skill has none."""
+    return [s.model_dump(exclude_none=True) for s in skills]
 
 
 class OfferIn(BaseModel):
@@ -76,6 +86,7 @@ class RecipeRowIn(BaseModel):
     level: int = Field(ge=1, le=5)
     code_count: int = Field(default=0, ge=0, le=MAX_PER_ROW)
     qcm_count: int = Field(default=0, ge=0, le=MAX_PER_ROW)
+    library_count: int = Field(default=0, ge=0, le=MAX_PER_ROW, description="Questions from the company's own library")
 
 
 class RecipeIn(BaseModel):
@@ -92,6 +103,7 @@ class RecipeIn(BaseModel):
 class RecipeRowOut(RecipeRowIn):
     stock_code: int = Field(description="Approved code questions for this language and level")
     stock_qcm: int = Field(description="Approved QCM questions for this language and level")
+    stock_library: int = Field(description="Approved questions of the company's library for this skill and level")
     available_levels: list[int] = Field(description="Levels of this language that have questions")
 
 
@@ -164,15 +176,18 @@ class StockRow(BaseModel):
     level: int
     code: int
     qcm: int
+    library: int = Field(default=0, description="The company's own approved questions")
 
 
 def total(offer: JobOffer) -> int:
-    return sum(r.code_count + r.qcm_count for r in offer.recipe)
+    return sum(r.code_count + r.qcm_count + r.library_count for r in offer.recipe)
 
 
 def rows_of(offer: JobOffer) -> list[RecipeRowIn]:
     return [
-        RecipeRowIn(language=r.language, level=r.level, code_count=r.code_count, qcm_count=r.qcm_count)
+        RecipeRowIn(
+            language=r.language, level=r.level, code_count=r.code_count, qcm_count=r.qcm_count, library_count=r.library_count
+        )
         for r in offer.recipe
     ]
 
@@ -219,14 +234,25 @@ def own_offer(db: Session, user: Principal, offer_id: uuid.UUID) -> JobOffer:
     return offer
 
 
-def stock_index(bank: CodePlayground) -> dict[tuple[str, int], dict]:
-    return {(s["language"], s["level"]): s for s in bank.stock()}
+EMPTY = {"code": 0, "qcm": 0, "library": 0}
+
+
+def stock_index(bank: CodePlayground, lib: Library, tenant_id: uuid.UUID) -> dict[tuple[str, int], dict]:
+    """(skill, level) → {code, qcm, library}: Code Playground's questions and the company's own."""
+    index = {(s["language"], s["level"]): {"code": s["code"], "qcm": s["qcm"], "library": 0} for s in bank.stock()}
+    for s in lib.stock(tenant_id):
+        index.setdefault((s["language"], s["level"]), dict(EMPTY))["library"] = s["count"]
+    return index
+
+
+def short(row, s: dict) -> bool:
+    return row.code_count > s["code"] or row.qcm_count > s["qcm"] or row.library_count > s["library"]
 
 
 def recipe_out(offer: JobOffer, stock: dict[tuple[str, int], dict]) -> RecipeOut:
     rows, warnings = [], []
     for i, r in enumerate(offer.recipe):
-        s = stock.get((r.language, r.level), {"code": 0, "qcm": 0})
+        s = stock.get((r.language, r.level), EMPTY)
         levels = sorted(level for (lang, level) in stock if lang == r.language)
         rows.append(
             RecipeRowOut(
@@ -234,12 +260,14 @@ def recipe_out(offer: JobOffer, stock: dict[tuple[str, int], dict]) -> RecipeOut
                 level=r.level,
                 code_count=r.code_count,
                 qcm_count=r.qcm_count,
+                library_count=r.library_count,
                 stock_code=s["code"],
                 stock_qcm=s["qcm"],
+                stock_library=s["library"],
                 available_levels=levels,
             )
         )
-        if r.code_count > s["code"] or r.qcm_count > s["qcm"]:
+        if short(r, s):
             warnings.append(
                 RecipeWarning(
                     code="stock_low",
@@ -282,7 +310,12 @@ def list_offers(
 
 @app.post("/offers", response_model=OfferOut, status_code=201, tags=["offers"])
 def create_offer(body: OfferIn, db: Db, user: Writer, analyzer: Analyzer) -> OfferOut:
-    offer = JobOffer(tenant_id=user.tenant_id, created_by=uuid.UUID(user.sub), **body.model_dump())
+    offer = JobOffer(
+        tenant_id=user.tenant_id,
+        created_by=uuid.UUID(user.sub),
+        **body.model_dump(exclude={"skills"}),
+        skills=skills_of(body.skills),
+    )
     db.add(offer)
     db.commit()
     db.refresh(offer)
@@ -299,6 +332,8 @@ def read_offer(offer_id: uuid.UUID, db: Db, user: Staff) -> OfferOut:
 def update_offer(offer_id: uuid.UUID, body: OfferUpdate, db: Db, user: Writer, analyzer: Analyzer) -> OfferOut:
     offer = own_offer(db, user, offer_id)
     changes = body.model_dump(exclude_unset=True)
+    if body.skills is not None:
+        changes["skills"] = skills_of(body.skills)
     for field, value in changes.items():
         setattr(offer, field, value)
     db.commit()
@@ -332,10 +367,10 @@ def update_weights(offer_id: uuid.UUID, body: WeightsIn, db: Db, user: Writer) -
 
 
 @app.post("/offers/{offer_id}/publish", response_model=OfferOut, tags=["offers"])
-def publish_offer(offer_id: uuid.UUID, db: Db, user: Writer, bank: Bank) -> OfferOut:
+def publish_offer(offer_id: uuid.UUID, db: Db, user: Writer, bank: Bank, lib: Lib) -> OfferOut:
     """Opens the apply link. The test must have questions, all of them in stock."""
     offer = own_offer(db, user, offer_id)
-    recipe = recipe_out(offer, stock_index(bank))
+    recipe = recipe_out(offer, stock_index(bank, lib, user.tenant_id))
     blocking = [w for w in recipe.warnings if w.code in ("empty", "stock_low")]
     if blocking:
         raise ApiError(409, "recipe_not_ready", blocking[0].message)
@@ -393,26 +428,27 @@ def replace_grid(offer_id: uuid.UUID, body: GridIn, db: Db, user: Writer, analyz
 
 
 @app.get("/offers/{offer_id}/recipe", response_model=RecipeOut, tags=["recipe"])
-def read_recipe(offer_id: uuid.UUID, db: Db, user: Staff, bank: Bank) -> RecipeOut:
-    return recipe_out(own_offer(db, user, offer_id), stock_index(bank))
+def read_recipe(offer_id: uuid.UUID, db: Db, user: Staff, bank: Bank, lib: Lib) -> RecipeOut:
+    return recipe_out(own_offer(db, user, offer_id), stock_index(bank, lib, user.tenant_id))
 
 
 @app.put("/offers/{offer_id}/recipe", response_model=RecipeOut, tags=["recipe"])
-def replace_recipe(offer_id: uuid.UUID, body: RecipeIn, db: Db, user: Writer, bank: Bank) -> RecipeOut:
-    """Sets which questions the test has: per language (or topic) and level, how many code and QCM.
+def replace_recipe(offer_id: uuid.UUID, body: RecipeIn, db: Db, user: Writer, bank: Bank, lib: Lib) -> RecipeOut:
+    """Sets which questions the test has: per skill and level, how many code, QCM and library questions.
 
     Each count must fit what the question bank has. Changing the recipe of a
     published offer affects only candidates who apply afterwards.
     """
     offer = own_offer(db, user, offer_id)
-    stock = stock_index(bank)
+    stock = stock_index(bank, lib, user.tenant_id)
     for i, row in enumerate(body.rows):
-        s = stock.get((row.language, row.level), {"code": 0, "qcm": 0})
-        if row.code_count > s["code"] or row.qcm_count > s["qcm"]:
+        s = stock.get((row.language, row.level), EMPTY)
+        if short(row, s):
             raise ApiError(
                 409,
                 "not_enough_questions",
-                f"Row {i + 1}: {row.language} level {row.level} has {s['code']} code and {s['qcm']} QCM questions",
+                f"Row {i + 1}: {row.language} level {row.level} has {s['code']} code, {s['qcm']} QCM"
+                f" and {s['library']} library questions",
             )
     offer.recipe = [RecipeRow(position=i, **row.model_dump()) for i, row in enumerate(body.rows)]
     db.commit()
@@ -421,14 +457,14 @@ def replace_recipe(offer_id: uuid.UUID, body: RecipeIn, db: Db, user: Writer, ba
 
 
 @app.post("/offers/{offer_id}/recipe/generate", response_model=RecipeOut, tags=["recipe"])
-def generate_recipe(offer_id: uuid.UUID, db: Db, user: Writer, bank: Bank) -> RecipeOut:
+def generate_recipe(offer_id: uuid.UUID, db: Db, user: Writer, bank: Bank, lib: Lib) -> RecipeOut:
     """Replaces the recipe with one built from the offer's skills, priorities and budget.
 
     Core skills (priority 1) get three times the questions of secondary ones
     (3), important ones (2) twice. The recruiter can then change any row.
     """
     offer = own_offer(db, user, offer_id)
-    stock = stock_index(bank)
+    stock = stock_index(bank, lib, user.tenant_id)
     rows, notes = generate(offer.skills or [], offer.question_budget, stock)
     offer.recipe = [RecipeRow(position=i, **row) for i, row in enumerate(rows)]
     db.commit()
@@ -439,9 +475,9 @@ def generate_recipe(offer_id: uuid.UUID, db: Db, user: Writer, bank: Bank) -> Re
 
 
 @app.get("/stock", response_model=list[StockRow], tags=["recipe"])
-def stock(user: Staff, bank: Bank) -> list[StockRow]:
-    """Approved questions per language (or topic) and level, for the recipe editor."""
-    return [StockRow(**s) for s in bank.stock()]
+def stock(user: Staff, bank: Bank, lib: Lib) -> list[StockRow]:
+    """Approved questions per skill and level, Code Playground's and the company's own, for the recipe editor."""
+    return [StockRow(language=k[0], level=k[1], **s) for k, s in stock_index(bank, lib, user.tenant_id).items()]
 
 
 # --- public and internal ----------------------------------------------------

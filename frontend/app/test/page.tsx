@@ -18,6 +18,9 @@ const LANGUAGE: Record<string, string> = {
   docker: "Docker",
 };
 
+const KIND: Record<Question["kind"], string> = { code: "Code", qcm: "QCM", numeric: "Number" };
+const topic = (q: Question) => q.skill ?? LANGUAGE[q.language] ?? q.language;
+
 function clock(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
@@ -121,8 +124,15 @@ export default function TestPage() {
           <h1>{test.offer_title}</h1>
           <p>Hello {test.candidate_name},</p>
           <p>
-            The test has <strong>{test.question_count} questions</strong>: {test.code_count} to solve in code and{" "}
-            {test.qcm_count} multiple choice. You have <strong>{Math.round(test.duration_seconds / 60)} minutes</strong>{" "}
+            The test has <strong>{test.question_count} questions</strong>:{" "}
+            {[
+              test.code_count && `${test.code_count} to solve in code`,
+              test.qcm_count && `${test.qcm_count} multiple choice`,
+              test.numeric_count && `${test.numeric_count} to answer with a number`,
+            ]
+              .filter(Boolean)
+              .join(", ")}
+            . You have <strong>{Math.round(test.duration_seconds / 60)} minutes</strong>{" "}
             in total.
           </p>
           <ul className="rules">
@@ -171,8 +181,13 @@ function Running({ token, initial, onEnded }: { token: string; initial: MyTest; 
     for (const t of Object.values(timers.current)) clearTimeout(t);
     await Promise.all(
       questions
-        .filter((q) => q.kind === "code" && q.answer_source !== null)
-        .map((q) => call(token, `/me/answers/${q.id}`, { method: "PUT", body: JSON.stringify({ source_code: q.answer_source }) }).catch(() => {})),
+        .filter((q) => (q.kind === "code" && q.answer_source !== null) || q.kind === "numeric")
+        .map((q) =>
+          call(token, `/me/answers/${q.id}`, {
+            method: "PUT",
+            body: JSON.stringify(q.kind === "code" ? { source_code: q.answer_source } : { value: q.answer_value }),
+          }).catch(() => {}),
+        ),
     );
     await call(token, "/me/submit", { method: "POST" }).catch(() => {});
     onEnded();
@@ -201,6 +216,15 @@ function Running({ token, initial, onEnded }: { token: string; initial: MyTest; 
     save(q, { choices: next });
   }
 
+  function enter(q: Question, text: string) {
+    const value = text.trim() === "" ? null : Number(text.replace(",", "."));
+    if (value !== null && !Number.isFinite(value)) return;
+    update(q, { answer_value: value });
+    setSaving("saving");
+    clearTimeout(timers.current[q.id]);
+    timers.current[q.id] = setTimeout(() => save(q, { value }), 600);
+  }
+
   function edit(q: Question, source: string) {
     update(q, { answer_source: source });
     setSaving("saving");
@@ -210,7 +234,11 @@ function Running({ token, initial, onEnded }: { token: string; initial: MyTest; 
 
   const q = questions[current];
   const answered = (x: Question) =>
-    x.kind === "qcm" ? (x.answer_choices?.length ?? 0) > 0 : (x.answer_source ?? "").trim() !== "" && x.answer_source !== x.starter_code;
+    x.kind === "qcm"
+      ? (x.answer_choices?.length ?? 0) > 0
+      : x.kind === "numeric"
+        ? x.answer_value !== null
+        : (x.answer_source ?? "").trim() !== "" && x.answer_source !== x.starter_code;
   const done = questions.filter(answered).length;
 
   return (
@@ -259,7 +287,7 @@ function Running({ token, initial, onEnded }: { token: string; initial: MyTest; 
             >
               <span className="num">{i + 1}</span>
               <span className="q-meta">
-                {x.kind === "code" ? "Code" : "QCM"} · {LANGUAGE[x.language] ?? x.language}
+                {KIND[x.kind]} · {topic(x)}
               </span>
               <span className={answered(x) ? "q-dot q-done" : "q-dot"} aria-label={answered(x) ? "answered" : "not answered"} />
             </button>
@@ -267,13 +295,15 @@ function Running({ token, initial, onEnded }: { token: string; initial: MyTest; 
         </nav>
         <section className="q-main">
           <p className="muted small">
-            Question {current + 1} of {questions.length} · {LANGUAGE[q.language] ?? q.language} · {LEVEL[q.level]} · about{" "}
+            Question {current + 1} of {questions.length} · {topic(q)} · {LEVEL[q.level]} · about{" "}
             {Math.round(q.timer_seconds / 60)} min
           </p>
           <h1>{q.title}</h1>
           <div className="statement">{q.statement}</div>
           {q.kind === "qcm" ? (
             <Choices q={q} onPick={(i) => pick(q, i)} />
+          ) : q.kind === "numeric" ? (
+            <NumberAnswer key={q.id} q={q} onEnter={(t) => enter(q, t)} />
           ) : (
             <CodeAnswer key={q.id} token={token} q={q} onEdit={(s) => edit(q, s)} />
           )}
@@ -308,6 +338,32 @@ function Choices({ q, onPick }: { q: Question; onPick: (i: number) => void }) {
         </label>
       ))}
     </fieldset>
+  );
+}
+
+function NumberAnswer({ q, onEnter }: { q: Question; onEnter: (text: string) => void }) {
+  const [text, setText] = useState(q.answer_value === null ? "" : String(q.answer_value));
+  const valid = text.trim() === "" || Number.isFinite(Number(text.replace(",", ".")));
+  return (
+    <div className="number-answer">
+      <label className="muted small" htmlFor={`n-${q.id}`}>
+        Your answer, as a number{q.unit ? ` in ${q.unit}` : ""}
+      </label>
+      <div className="number-row">
+        <input
+          id={`n-${q.id}`}
+          inputMode="decimal"
+          value={text}
+          onChange={(e) => {
+            setText(e.target.value);
+            onEnter(e.target.value);
+          }}
+          placeholder="0"
+        />
+        {q.unit && <span className="muted">{q.unit}</span>}
+      </div>
+      {!valid && <p className="error small">Type a number, like 1250.5</p>}
+    </div>
   );
 }
 
