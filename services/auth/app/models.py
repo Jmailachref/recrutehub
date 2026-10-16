@@ -3,12 +3,15 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, String, Uuid, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from rh_common.db import Base
 
 USER_ROLES = ("admin", "editor", "recruiter")
+# How experienced an employee is: 1 junior, 2 intermediate, 3 senior, 4 expert.
+# A library question is validated by someone more experienced than its author.
+EXPERIENCE_LEVELS = (1, 2, 3, 4)
 
 
 class Tenant(Base):
@@ -21,7 +24,10 @@ class Tenant(Base):
 
 class User(Base):
     __tablename__ = "users"
-    __table_args__ = (CheckConstraint("role IN ('admin','editor','recruiter')", name="ck_users_role"),)
+    __table_args__ = (
+        CheckConstraint("role IN ('admin','editor','recruiter')", name="ck_users_role"),
+        CheckConstraint("experience BETWEEN 1 AND 4", name="ck_users_experience"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), index=True)
@@ -29,6 +35,7 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String(100), default="")
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(20))
+    experience: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

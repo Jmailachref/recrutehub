@@ -2,8 +2,10 @@
 
 Ending a test (the candidate submits, or their time runs out) only marks it
 submitted and queues a score_session job: the worker sends each code answer
-to Code Playground to be judged, checks the QCM answers, and fills in the
-scores once every code answer has been judged.
+to Code Playground to be judged, checks the QCM and numeric answers, and
+fills in the scores once every code answer has been judged.
+
+Theory is the QCM and numeric questions, practice the code ones.
 """
 
 import logging
@@ -16,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.models import Answer, TestSession
 from rh_common import internal, queue
 from rh_common.codeplay import CodePlayground
+from rh_common.library import Library, library
 
 log = logging.getLogger(__name__)
 # Answers saved up to this long after the deadline still count (network delays).
@@ -67,11 +70,11 @@ def catch_up(db: Session, session: TestSession) -> None:
 
 
 def totals(session: TestSession) -> None:
-    def percent(kind: str) -> float | None:
-        scores = [a.score or 0.0 for a in session.answers if a.kind == kind]
+    def percent(*kinds: str) -> float | None:
+        scores = [a.score or 0.0 for a in session.answers if a.kind in kinds]
         return round(100 * sum(scores) / len(scores), 1) if scores else None
 
-    session.theory_score, session.practice_score = percent("qcm"), percent("code")
+    session.theory_score, session.practice_score = percent("qcm", "numeric"), percent("code")
     if session.theory_score is None or session.practice_score is None:
         session.total_score = session.practice_score if session.theory_score is None else session.theory_score
     else:
@@ -80,12 +83,26 @@ def totals(session: TestSession) -> None:
         )
 
 
-def judge_answer(bank: CodePlayground, session: TestSession, answer: Answer) -> bool:
+def judge_answer(bank: CodePlayground, session: TestSession, answer: Answer, lib: Library | None = None) -> bool:
     """Scores one answer as far as possible now; True once it has its final score."""
     if answer.score is not None:
         return True
+
+    def full() -> dict:
+        if answer.source == "library":
+            return (lib or library()).questions([answer.problem_id])[str(answer.problem_id)]
+        return bank.problem_full(str(answer.problem_id))
+
+    if answer.kind == "numeric":
+        q = full()
+        if answer.value is None:
+            answer.score, answer.verdict = 0.0, "no_answer"
+        else:
+            right = abs(answer.value - q["answer_value"]) <= (q.get("tolerance") or 0) + 1e-9
+            answer.score, answer.verdict = (1.0, "correct") if right else (0.0, "wrong")
+        return True
     if answer.kind == "qcm":
-        right = bank.problem_full(str(answer.problem_id)).get("correct_choices") or []
+        right = full().get("correct_choices") or []
         given = answer.choices or []
         answer.score = 1.0 if given and sorted(set(given)) == sorted(right) else 0.0
         answer.verdict = "correct" if answer.score else ("no_answer" if not given else "wrong")
@@ -108,14 +125,16 @@ def judge_answer(bank: CodePlayground, session: TestSession, answer: Answer) -> 
     return True
 
 
-def score_session(job: dict, db: Session, bank: CodePlayground, sleep=time.sleep, patience: float = 600) -> TestSession | None:
+def score_session(
+    job: dict, db: Session, bank: CodePlayground, sleep=time.sleep, patience: float = 600, lib: Library | None = None
+) -> TestSession | None:
     """Worker job: judges every answer of an ended test, then sets its scores."""
     session = db.get(TestSession, uuid.UUID(job["session_id"]))
     if session is None or session.status != "submitted":
         return session
     waited = 0.0
     while True:
-        done = [judge_answer(bank, session, a) for a in session.answers]
+        done = [judge_answer(bank, session, a, lib) for a in session.answers]
         db.commit()
         if all(done):
             break

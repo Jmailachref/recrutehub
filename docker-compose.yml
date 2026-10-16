@@ -94,6 +94,7 @@ services:
     image: recrutehub/questions:local
     environment: &questions-env
       <<: *env
+      SERVICE_NAME: questions
       DATABASE_URL: postgresql+psycopg://questions:questions@postgres:5432/questions_db
       CODEPLAY_URL: http://codeplay-api:8000
       CODEPLAY_API_KEY: ${CODEPLAY_API_KEY:-recrutehub-dev-key}

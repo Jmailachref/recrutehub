@@ -24,6 +24,7 @@ use_local_key(keys.private_key().public_key())
 Db = Annotated[Session, Depends(get_session)]
 Password = Annotated[str, Field(min_length=8, max_length=200)]
 Role = Literal["admin", "editor", "recruiter"]
+Experience = Annotated[int, Field(ge=1, le=4, description="1 junior, 2 intermediate, 3 senior, 4 expert")]
 
 
 class LoginIn(BaseModel):
@@ -47,6 +48,7 @@ class UserOut(BaseModel):
     email: str
     full_name: str
     role: str
+    experience: int
     is_active: bool
     tenant_id: uuid.UUID
     tenant_name: str
@@ -57,12 +59,14 @@ class UserIn(BaseModel):
     full_name: str = Field(default="", max_length=100)
     password: Password
     role: Role = "recruiter"
+    experience: Experience = 1
 
 
 class UserUpdate(BaseModel):
     full_name: str | None = Field(default=None, max_length=100)
     password: Password | None = None
     role: Role | None = None
+    experience: Experience | None = None
     is_active: bool | None = None
 
 
@@ -83,6 +87,7 @@ def user_out(user: User) -> UserOut:
         email=user.email,
         full_name=user.full_name,
         role=user.role,
+        experience=user.experience,
         is_active=user.is_active,
         tenant_id=user.tenant_id,
         tenant_name=user.tenant.name,
@@ -210,6 +215,7 @@ def create_user(body: UserIn, db: Db, admin: AdminOnly) -> UserOut:
         full_name=body.full_name,
         password_hash=hash_password(body.password),
         role=body.role,
+        experience=body.experience,
     )
     db.add(user)
     try:
@@ -230,6 +236,8 @@ def update_user(user_id: uuid.UUID, body: UserUpdate, db: Db, admin: AdminOnly) 
         user.full_name = body.full_name
     if body.role is not None:
         user.role = body.role
+    if body.experience is not None:
+        user.experience = body.experience
     if body.is_active is not None:
         user.is_active = body.is_active
     if body.password is not None:
@@ -280,3 +288,20 @@ def user_names(body: NamesIn, db: Db, _: Principal = Depends(require_role("servi
         return {}
     users = db.scalars(select(User).where(User.id.in_(body.ids)))
     return {str(u.id): u.full_name or u.email for u in users}
+
+
+class ProfileOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    role: str
+    experience: int
+    tenant_id: uuid.UUID
+
+
+@app.post("/internal/users/profiles", response_model=list[ProfileOut], tags=["internal"])
+def user_profiles(body: NamesIn, db: Db, _: Principal = Depends(require_role("service"))) -> list[ProfileOut]:
+    """Role and experience of these users, to decide who may validate whose questions."""
+    if not body.ids:
+        return []
+    users = db.scalars(select(User).where(User.id.in_(body.ids), User.is_active.is_(True)))
+    return [ProfileOut(id=u.id, name=u.full_name or u.email, role=u.role, experience=u.experience, tenant_id=u.tenant_id) for u in users]

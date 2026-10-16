@@ -16,6 +16,7 @@ from rh_common import ApiError, tokens  # noqa: E402
 from rh_common.codeplay import codeplay  # noqa: E402
 from rh_common.cvanalyzer import cvanalyzer  # noqa: E402
 from rh_common.db import Base, engine  # noqa: E402
+from rh_common.library import library  # noqa: E402
 
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 tokens.use_local_key(KEY.public_key())
@@ -47,6 +48,16 @@ class FakeBank:
 
     def stock(self, language=None):
         return [r for r in self.rows if language in (None, r["language"])]
+
+
+class FakeLibrary:
+    """The company's own questions: tenant → [{language, level, count}]."""
+
+    def __init__(self):
+        self.rows: dict = {}
+
+    def stock(self, tenant_id):
+        return self.rows.get(tenant_id, [])
 
 
 class FakeAnalyzer:
@@ -103,5 +114,13 @@ def analyzer():
 
 
 @pytest.fixture
-def client(bank, analyzer):
+def lib():
+    fake = FakeLibrary()
+    app.dependency_overrides[library] = lambda: fake
+    yield fake
+    app.dependency_overrides.pop(library, None)
+
+
+@pytest.fixture
+def client(bank, analyzer, lib):
     return TestClient(app)

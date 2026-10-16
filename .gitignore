@@ -8,3 +8,4 @@ frontend/next-env.d.ts
 .env
 .codeplay/
 .cv-analyzer/
+libs/common/build/

@@ -13,11 +13,13 @@ from app.scoring import aware, catch_up, deadline, end, now
 from rh_common import ApiError, Principal, create_app, internal, queue, require_role
 from rh_common.codeplay import CodePlayground, codeplay
 from rh_common.db import get_session
+from rh_common.library import Library, library
 
 app = create_app("assessments")
 
 Db = Annotated[Session, Depends(get_session)]
 Bank = Annotated[CodePlayground, Depends(codeplay)]
+Lib = Annotated[Library, Depends(library)]
 Staff = Annotated[Principal, Depends(require_role("admin", "editor", "recruiter"))]
 Writer = Annotated[Principal, Depends(require_role("admin", "recruiter"))]
 Candidate = Annotated[Principal, Depends(require_role("candidate"))]
@@ -52,6 +54,7 @@ class SessionSummary(BaseModel):
 class AnswerDetail(BaseModel):
     problem_id: uuid.UUID
     position: int
+    source: str = Field(description="codeplay, or library: the company's own questions")
     kind: str
     language: str
     level: int
@@ -61,6 +64,11 @@ class AnswerDetail(BaseModel):
     correct_choices: list[int] | None = Field(description="QCM: the right options")
     choices: list[int] | None = Field(description="QCM: what the candidate picked")
     source_code: str | None
+    value: float | None = Field(default=None, description="Numeric: what the candidate answered")
+    answer_value: float | None = Field(default=None, description="Numeric: the right answer")
+    tolerance: float | None = None
+    unit: str | None = None
+    explanation: str = ""
     verdict: str | None
     score: float | None = Field(description="0 to 1 once judged")
 
@@ -87,10 +95,12 @@ class Question(BaseModel):
     starter_code: str | None
     choices: list[str] | None
     multiple: bool
+    unit: str | None = Field(default=None, description="Numeric: the unit of the answer")
     examples: list[dict]
     hidden_tests: int
     answer_choices: list[int] | None
     answer_source: str | None
+    answer_value: float | None = Field(default=None, description="Numeric: the saved answer")
 
 
 class MyTest(BaseModel):
@@ -101,6 +111,7 @@ class MyTest(BaseModel):
     question_count: int
     code_count: int
     qcm_count: int
+    numeric_count: int = 0
     deadline: datetime | None
     seconds_left: int | None
     questions: list[Question] = Field(description="Empty until the test starts and after it ends")
@@ -109,6 +120,7 @@ class MyTest(BaseModel):
 class AnswerIn(BaseModel):
     choices: list[int] | None = Field(default=None, max_length=10)
     source_code: str | None = Field(default=None, max_length=MAX_SOURCE)
+    value: float | None = Field(default=None, description="The answer to a numeric question")
 
 
 class RunIn(BaseModel):
@@ -147,7 +159,7 @@ def own_session(db: Session, user: Principal, session_id: uuid.UUID) -> TestSess
 
 
 @app.post("/sessions", response_model=SessionSummary, status_code=201, tags=["sessions"])
-def invite(body: InviteIn, db: Db, user: Writer, bank: Bank) -> SessionSummary:
+def invite(body: InviteIn, db: Db, user: Writer, bank: Bank, lib: Lib) -> SessionSummary:
     """Draws the candidate's questions from the offer's recipe and emails them a 7-day test link."""
     candidate = internal.call("GET", "candidates", f"/internal/candidates/{body.candidate_id}")
     if candidate["tenant_id"] != str(user.tenant_id):
@@ -162,11 +174,21 @@ def invite(body: InviteIn, db: Db, user: Writer, bank: Bank) -> SessionSummary:
         for r in offer["recipe"]
         if r["code_count"] or r["qcm_count"]
     ]
-    if not recipe:
+    own = [
+        {"language": r["language"], "level": r["level"], "count": r["library_count"]}
+        for r in offer["recipe"]
+        if r.get("library_count")
+    ]
+    if not recipe and not own:
         raise ApiError(409, "recipe_not_ready", "The offer's test has no questions")
 
     session_id = uuid.uuid4()
-    test = bank.create_test(recipe, scope=str(user.tenant_id), external_ref=str(session_id))
+    drawn = lib.draw(user.tenant_id, own) if own else []
+    test = bank.create_test(recipe, scope=str(user.tenant_id), external_ref=str(session_id)) if recipe else None
+    # In the recipe's order: each skill's Code Playground questions, then the company's own.
+    order = {r["language"]: i for i, r in enumerate(offer["recipe"])}
+    questions = [("codeplay", q) for q in (test["questions"] if test else [])] + [("library", q) for q in drawn]
+    questions.sort(key=lambda sq: order.get(sq[1]["language"], len(order)))
     session = TestSession(
         id=session_id,
         tenant_id=user.tenant_id,
@@ -175,8 +197,8 @@ def invite(body: InviteIn, db: Db, user: Writer, bank: Bank) -> SessionSummary:
         candidate_name=candidate["name"],
         candidate_email=candidate["email"],
         offer_title=offer["title"],
-        codeplay_test_id=uuid.UUID(test["id"]),
-        duration_seconds=sum(q["timer_seconds"] for q in test["questions"]),
+        codeplay_test_id=uuid.UUID(test["id"]) if test else None,
+        duration_seconds=sum(q["timer_seconds"] for _, q in questions),
         weight_theory=offer["weight_theory"],
         weight_practice=offer["weight_practice"],
         invited_by=uuid.UUID(user.sub),
@@ -186,12 +208,13 @@ def invite(body: InviteIn, db: Db, user: Writer, bank: Bank) -> SessionSummary:
             Answer(
                 problem_id=uuid.UUID(q["id"]),
                 position=i,
+                source=source,
                 kind=q["kind"],
                 language=q["language"],
                 level=q["level"],
                 title=q["title"],
             )
-            for i, q in enumerate(test["questions"])
+            for i, (source, q) in enumerate(questions)
         ],
     )
     token = internal.call(
@@ -236,16 +259,18 @@ def list_sessions(
 
 
 @app.get("/sessions/{session_id}", response_model=SessionDetail, tags=["sessions"])
-def read_session(session_id: uuid.UUID, db: Db, user: Staff, bank: Bank) -> SessionDetail:
+def read_session(session_id: uuid.UUID, db: Db, user: Staff, bank: Bank, lib: Lib) -> SessionDetail:
     """One test with every question, the candidate's answers and how each was judged."""
     s = own_session(db, user, session_id)
+    own = lib.questions([a.problem_id for a in s.answers if a.source == "library"])
     answers = []
     for a in s.answers:
-        full = bank.problem_full(str(a.problem_id))
+        full = own[str(a.problem_id)] if a.source == "library" else bank.problem_full(str(a.problem_id))
         answers.append(
             AnswerDetail(
                 problem_id=a.problem_id,
                 position=a.position,
+                source=a.source,
                 kind=a.kind,
                 language=a.language,
                 level=a.level,
@@ -255,6 +280,11 @@ def read_session(session_id: uuid.UUID, db: Db, user: Staff, bank: Bank) -> Sess
                 correct_choices=full.get("correct_choices"),
                 choices=a.choices,
                 source_code=a.source_code,
+                value=a.value,
+                answer_value=full.get("answer_value"),
+                tolerance=full.get("tolerance"),
+                unit=full.get("unit"),
+                explanation=full.get("explanation") or "",
                 verdict=a.verdict,
                 score=a.score,
             )
@@ -289,17 +319,18 @@ def running(db: Session, me: Principal) -> TestSession:
     return s
 
 
-def my_test(s: TestSession, bank: CodePlayground) -> MyTest:
+def my_test(s: TestSession, bank: CodePlayground, lib: Library) -> MyTest:
     end_at = deadline(s)
     questions = []
     if s.status == "in_progress":
-        saved = {a.problem_id: a for a in s.answers}
-        for i, q in enumerate(bank.test(str(s.codeplay_test_id))["questions"]):
-            a = saved[uuid.UUID(q["id"])]
+        shown = {q["id"]: q for q in bank.test(str(s.codeplay_test_id))["questions"]} if s.codeplay_test_id else {}
+        shown |= lib.questions([a.problem_id for a in s.answers if a.source == "library"])
+        for a in s.answers:
+            q = shown[str(a.problem_id)]
             questions.append(
                 Question(
                     id=q["id"],
-                    position=i,
+                    position=a.position,
                     kind=q["kind"],
                     language=q["language"],
                     level=q["level"],
@@ -309,10 +340,15 @@ def my_test(s: TestSession, bank: CodePlayground) -> MyTest:
                     starter_code=q.get("starter_code"),
                     choices=q.get("choices"),
                     multiple=q.get("multiple", False),
-                    examples=[{"name": x["name"], "input": x["input"], "expected_output": x["expected_output"]} for x in q["scenarios"]],
+                    unit=q.get("unit"),
+                    examples=[
+                        {"name": x["name"], "input": x["input"], "expected_output": x["expected_output"]}
+                        for x in q.get("scenarios", [])
+                    ],
                     hidden_tests=q.get("hidden_scenarios", 0),
                     answer_choices=a.choices,
                     answer_source=a.source_code,
+                    answer_value=a.value,
                 )
             )
     return MyTest(
@@ -323,6 +359,7 @@ def my_test(s: TestSession, bank: CodePlayground) -> MyTest:
         question_count=len(s.answers),
         code_count=sum(a.kind == "code" for a in s.answers),
         qcm_count=sum(a.kind == "qcm" for a in s.answers),
+        numeric_count=sum(a.kind == "numeric" for a in s.answers),
         deadline=end_at,
         seconds_left=max(0, int((end_at - now()).total_seconds())) if end_at and s.status == "in_progress" else None,
         questions=questions,
@@ -330,13 +367,13 @@ def my_test(s: TestSession, bank: CodePlayground) -> MyTest:
 
 
 @app.get("/me", response_model=MyTest, tags=["candidate"])
-def read_my_test(db: Db, me: Candidate, bank: Bank) -> MyTest:
+def read_my_test(db: Db, me: Candidate, bank: Bank, lib: Lib) -> MyTest:
     """The candidate's test: an overview before they start, the questions while it runs."""
-    return my_test(my_session(db, me), bank)
+    return my_test(my_session(db, me), bank, lib)
 
 
 @app.post("/me/start", response_model=MyTest, tags=["candidate"])
-def start(db: Db, me: Candidate, bank: Bank) -> MyTest:
+def start(db: Db, me: Candidate, bank: Bank, lib: Lib) -> MyTest:
     """Starts the clock. The candidate then has duration_seconds to answer and submit."""
     s = my_session(db, me)
     if s.status == "expired":
@@ -344,7 +381,7 @@ def start(db: Db, me: Candidate, bank: Bank) -> MyTest:
     if s.status == "invited":
         s.status, s.started_at = "in_progress", now()
         db.commit()
-    return my_test(s, bank)
+    return my_test(s, bank, lib)
 
 
 @app.put("/me/answers/{problem_id}", status_code=204, tags=["candidate"])
@@ -355,11 +392,15 @@ def save_answer(problem_id: uuid.UUID, body: AnswerIn, db: Db, me: Candidate) ->
     if answer is None:
         raise ApiError(404, "not_found", "This question is not part of your test")
     if answer.kind == "qcm":
-        if body.choices is None or body.source_code is not None:
+        if body.choices is None or body.source_code is not None or body.value is not None:
             raise ApiError(400, "invalid_request", "A QCM answer is a list of choices")
         answer.choices = sorted(set(body.choices))
+    elif answer.kind == "numeric":
+        if body.choices is not None or body.source_code is not None:
+            raise ApiError(400, "invalid_request", "A numeric answer is a number")
+        answer.value = body.value
     else:
-        if body.source_code is None or body.choices is not None:
+        if body.source_code is None or body.choices is not None or body.value is not None:
             raise ApiError(400, "invalid_request", "A code answer is source code")
         answer.source_code = body.source_code
     answer.answered_at = now()
@@ -387,9 +428,9 @@ def read_run(run_id: uuid.UUID, db: Db, me: Candidate, bank: Bank) -> dict:
 
 
 @app.post("/me/submit", response_model=MyTest, tags=["candidate"])
-def submit(db: Db, me: Candidate, bank: Bank) -> MyTest:
+def submit(db: Db, me: Candidate, bank: Bank, lib: Lib) -> MyTest:
     """Ends the test. Saved answers are judged; unanswered questions score 0."""
     s = running(db, me)
     end(db, s)
-    return my_test(s, bank)
+    return my_test(s, bank, lib)
 
