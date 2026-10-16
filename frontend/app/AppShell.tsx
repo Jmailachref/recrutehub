@@ -10,7 +10,6 @@ export const useUser = () => useContext(UserContext);
 
 const NAV = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/candidates", label: "Candidates" },
   { href: "/library", label: "Library" },
   { href: "/team", label: "Team", adminOnly: true },
 ];

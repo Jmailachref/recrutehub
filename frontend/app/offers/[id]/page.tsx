@@ -176,6 +176,74 @@ export default function OfferDetailPage() {
         ))}
       </div>
 
+      <div id="candidates" className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto mb-8">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h2 className="font-semibold text-gray-800">Candidates</h2>
+          <span className="text-sm text-gray-500">{candidates.length} total</span>
+        </div>
+        {candidates.length === 0 ? (
+          <p className="text-gray-500 text-sm text-center py-10">
+            No candidates yet.{offer.status === "active" && " Share the apply link to get some."}
+          </p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wide whitespace-nowrap">
+              <tr>
+                <th className="px-5 py-3 text-left">Rank</th>
+                <th className="px-5 py-3 text-left">Name</th>
+                <th className="px-5 py-3 text-left">Email</th>
+                <th className="px-5 py-3 text-left">Applied</th>
+                <th className="px-5 py-3 text-left">Status</th>
+                <th className="px-5 py-3 text-right">CV Points</th>
+                <th className="px-5 py-3 text-right">Final Score</th>
+                <th className="px-5 py-3"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {ranked.map((c, i) => {
+                const t = tests[c.id];
+                const scored = t?.total_score != null;
+                return (
+                  <tr key={c.id} className="hover:bg-gray-50 transition">
+                    <td className="px-5 py-3 text-gray-500 tabular-nums">{scored ? i + 1 : "—"}</td>
+                    <td className="px-5 py-3 font-medium text-gray-900">{c.name}</td>
+                    <td className="px-5 py-3 text-gray-600">{c.email}</td>
+                    <td className="px-5 py-3 text-gray-600 tabular-nums">{new Date(c.created_at).toLocaleDateString()}</td>
+                    <td className="px-5 py-3">
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 whitespace-nowrap">
+                        {t ? testStatusLabel[t.status] : candidateStatusLabel[c.status]}
+                      </span>
+                    </td>
+                    <td className={`px-5 py-3 text-right tabular-nums ${pointsColor(c.cv_score)}`}>
+                      <span title={c.cv_missing.length ? `Missing core skills: ${c.cv_missing.map(topicName).join(", ")}` : undefined}>
+                        {formatPoints(c.cv_score)}
+                      </span>
+                      {c.cv_missing.length > 0 && <span className="block text-xs font-normal text-red-600">misses {c.cv_missing.length} core</span>}
+                    </td>
+                    <td className={`px-5 py-3 text-right tabular-nums ${scoreColor(t?.total_score)}`}>
+                      {scored ? t.total_score!.toFixed(1) : "—"}
+                    </td>
+                    <td className="px-5 py-3 text-right whitespace-nowrap">
+                      {!t && canInvite && offer.status !== "archived" && (
+                        <button
+                          onClick={() => invite(c)}
+                          disabled={inviting === c.id}
+                          className="text-xs mr-3 px-2 py-1 rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 disabled:opacity-50 transition"
+                        >
+                          {inviting === c.id ? "Sending…" : "Invite to test"}
+                        </button>
+                      )}
+                      <Link href={`/offers/${offer.id}/candidates/${c.id}`} className="text-blue-600 hover:underline text-xs">
+                        View
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
       {recipe && (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto mb-8">
           <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-3">
@@ -271,70 +339,6 @@ export default function OfferDetailPage() {
         )}
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
-        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-          <h2 className="font-semibold text-gray-800">Candidates</h2>
-          <span className="text-sm text-gray-500">{candidates.length} total</span>
-        </div>
-        {candidates.length === 0 ? (
-          <p className="text-gray-500 text-sm text-center py-10">No candidates yet.</p>
-        ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wide whitespace-nowrap">
-              <tr>
-                <th className="px-5 py-3 text-left">Rank</th>
-                <th className="px-5 py-3 text-left">Name</th>
-                <th className="px-5 py-3 text-left">Email</th>
-                <th className="px-5 py-3 text-left">Status</th>
-                <th className="px-5 py-3 text-right">CV Points</th>
-                <th className="px-5 py-3 text-right">Final Score</th>
-                <th className="px-5 py-3"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {ranked.map((c, i) => {
-                const t = tests[c.id];
-                const scored = t?.total_score != null;
-                return (
-                  <tr key={c.id} className="hover:bg-gray-50 transition">
-                    <td className="px-5 py-3 text-gray-500 tabular-nums">{scored ? i + 1 : "—"}</td>
-                    <td className="px-5 py-3 font-medium text-gray-900">{c.name}</td>
-                    <td className="px-5 py-3 text-gray-600">{c.email}</td>
-                    <td className="px-5 py-3">
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 whitespace-nowrap">
-                        {t ? testStatusLabel[t.status] : candidateStatusLabel[c.status]}
-                      </span>
-                    </td>
-                    <td className={`px-5 py-3 text-right tabular-nums ${pointsColor(c.cv_score)}`}>
-                      <span title={c.cv_missing.length ? `Missing core skills: ${c.cv_missing.map(topicName).join(", ")}` : undefined}>
-                        {formatPoints(c.cv_score)}
-                      </span>
-                      {c.cv_missing.length > 0 && <span className="block text-xs font-normal text-red-600">misses {c.cv_missing.length} core</span>}
-                    </td>
-                    <td className={`px-5 py-3 text-right tabular-nums ${scoreColor(t?.total_score)}`}>
-                      {scored ? t.total_score!.toFixed(1) : "—"}
-                    </td>
-                    <td className="px-5 py-3 text-right whitespace-nowrap">
-                      {!t && canInvite && offer.status !== "archived" && (
-                        <button
-                          onClick={() => invite(c)}
-                          disabled={inviting === c.id}
-                          className="text-xs mr-3 px-2 py-1 rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 disabled:opacity-50 transition"
-                        >
-                          {inviting === c.id ? "Sending…" : "Invite to test"}
-                        </button>
-                      )}
-                      <Link href={`/offers/${offer.id}/candidates/${c.id}`} className="text-blue-600 hover:underline text-xs">
-                        View
-                      </Link>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
     </div>
   );
 }

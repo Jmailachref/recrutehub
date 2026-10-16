@@ -77,9 +77,10 @@ candidates and scored tests. **New Offer** is one page in three parts:
 draft** keeps it closed; archiving closes it. Offers nobody applied to can be
 deleted.
 
+Candidates belong to their offer: there is no page listing every candidate.
 The offer page shows the apply link, the counts (applied, invited, submitted,
-scored), the test recipe, the CV scoring and the candidates ranked by test score,
-then CV points; each one opens to their CV, scores and every answer.
+scored), the candidates ranked by test score, then CV points, the test recipe
+and the CV scoring; each candidate opens to their CV, scores and every answer.
 
 ## Test library
 
@@ -134,11 +135,11 @@ and a CV (PDF, 10 MB at most). The CV goes to the `cvs` bucket as
 `<company>/<offer>/<candidate>.pdf`, and the candidate gets a confirmation
 email (open http://localhost:8025 to read it locally). One email can apply once
 per offer, and one address can send 10 applications an hour. Recruiters see
-the applications under **Candidates**, filtered by offer, and open each CV.
+each offer's applications on the offer's page, and open each CV.
 
 ## Candidate tests
 
-From **Candidates**, a recruiter invites an applicant to the test. Code
+From the offer's page, a recruiter invites an applicant to the test. Code
 Playground draws their questions from the offer's recipe (questions this
 company already used come last) and freezes them, and the candidate gets an
 email with a link that works for 7 days. The link carries a candidate token
